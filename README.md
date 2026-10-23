@@ -1,16 +1,33 @@
-# React + Vite
+# AtlasIB frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React, Vite, Tailwind CSS, and Axios frontend for IB course planning and university program matching.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```sh
+npm ci
+npm run dev
+```
 
-## React Compiler
+In development, API requests default to `http://127.0.0.1:8000/api/v1`. Override this with `VITE_API_BASE_URL` when needed.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Production deployment
 
-## Expanding the Oxlint configuration
+Build and serve the static site from `dist/`:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```sh
+npm ci
+npm run build
+```
+
+Set `VITE_API_BASE_URL` in the hosting provider's build environment to the publicly reachable HTTPS API URL, for example `https://api.example.com/api/v1`. If the API is reverse-proxied under the frontend domain, set it to `/api/v1` instead. The production default is `/api/v1`; it intentionally does not use localhost.
+
+The API server must allow the deployed frontend origin through CORS. Both frontend and API should use HTTPS in production. This is a standard static Vite build and can be deployed to a static hosting provider. If deploying beneath a URL subpath, configure the Vite `base`, PWA manifest `start_url`/`scope`, and service-worker scope for that path.
+
+## PWA
+
+The production build includes a web app manifest, 192/512 pixel app icons, an Apple touch icon, and a Workbox service worker that precaches the frontend shell and static assets. The service worker updates automatically. API responses are not cached, so online API functionality still requires network access.
+
+Installability and service-worker behavior require a secure context: HTTPS in production (or localhost for development). After changing PWA assets or configuration, run `npm run build` and verify the served site in a browser's Application panel.
+
+Copy `.env.example` to `.env.local` for local overrides. Never commit production secrets or private API credentials to `VITE_*` variables; Vite embeds those values in public client assets.
