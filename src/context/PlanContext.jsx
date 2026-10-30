@@ -231,6 +231,42 @@ export function PlanProvider({ children }) {
     updateSelectedProgramIds([])
   }, [updateSelectedProgramIds])
 
+  const clearExpiredProfile = useCallback(
+    (profileId) => {
+      if (profileIdRef.current !== profileId) return
+
+      console.warn(
+        '[Self-Healing] Local profile ID was not found on the server. Clearing stale profile cache.',
+      )
+      profileIdRef.current = null
+      setCurrentProfileId(null)
+      setDiagnosisResult(null)
+      setWizardAnswers(defaultWizardAnswers)
+      setActiveScenario(null)
+      setIsLoadingSavedPrograms(false)
+      retryModeRef.current = null
+      updateSelectedProgramIds(initialProgramIds)
+      setPersistenceError('')
+
+      for (const key of [
+        PROFILE_STORAGE_KEY,
+        EMAIL_STORAGE_KEY,
+        getActiveScenarioStorageKey(profileId),
+        getActiveScenarioStorageKey(null),
+      ]) {
+        try {
+          window.localStorage.removeItem(key)
+        } catch (error) {
+          console.warn(
+            `[Self-Healing] Could not clear stale cache key "${key}".`,
+            error,
+          )
+        }
+      }
+    },
+    [updateSelectedProgramIds],
+  )
+
   useEffect(() => {
     if (!currentProfileId) return undefined
     if (skipHydrationForProfileRef.current === currentProfileId) {
@@ -250,6 +286,16 @@ export function PlanProvider({ children }) {
       if (!isActive) return
 
       const [profileResult, programsResult] = results
+      const missingProfile =
+        (profileResult.status === 'rejected' &&
+          profileResult.reason?.response?.status === 404) ||
+        (programsResult.status === 'rejected' &&
+          programsResult.reason?.response?.status === 404)
+      if (missingProfile) {
+        clearExpiredProfile(currentProfileId)
+        return
+      }
+
       const errors = []
 
       if (profileResult.status === 'fulfilled') {
@@ -288,6 +334,10 @@ export function PlanProvider({ children }) {
 
     loadProfileState().catch((error) => {
       if (!isActive) return
+      if (error?.response?.status === 404) {
+        clearExpiredProfile(currentProfileId)
+        return
+      }
       setPersistenceError(
         i18n.t('app.profile_restore_failed', {
           error: getErrorMessage(error),
@@ -299,7 +349,7 @@ export function PlanProvider({ children }) {
     return () => {
       isActive = false
     }
-  }, [currentProfileId, updateSelectedProgramIds])
+  }, [clearExpiredProfile, currentProfileId, updateSelectedProgramIds])
 
   const adoptRestoredProfile = useCallback(
     (profileId) => {
@@ -413,6 +463,11 @@ export function PlanProvider({ children }) {
         retryModeRef.current = null
         setPersistenceError('')
       } catch (error) {
+        if (error?.response?.status === 404) {
+          setConflictCandidate(null)
+          clearExpiredProfile(profileId)
+          return
+        }
         retryModeRef.current = 'load'
         setPersistenceError(
           i18n.t('app.retry_profile_load_failed', {
@@ -423,7 +478,12 @@ export function PlanProvider({ children }) {
         setIsLoadingSavedPrograms(false)
       }
     },
-    [adoptRestoredProfile, conflictCandidate, updateSelectedProgramIds],
+    [
+      adoptRestoredProfile,
+      clearExpiredProfile,
+      conflictCandidate,
+      updateSelectedProgramIds,
+    ],
   )
 
   const saveProfileId = useCallback(
@@ -694,6 +754,10 @@ export function PlanProvider({ children }) {
         setPersistenceError('')
         return { success: true }
       } catch (error) {
+        if (error?.response?.status === 404) {
+          clearExpiredProfile(profileId)
+          return { success: true }
+        }
         const message = i18n.t('app.retry_profile_load_failed', {
           error: getErrorMessage(error),
         })
@@ -726,7 +790,7 @@ export function PlanProvider({ children }) {
       syncingRef.current = false
       setIsSyncingPrograms(false)
     }
-  }, [updateSelectedProgramIds])
+  }, [clearExpiredProfile, updateSelectedProgramIds])
 
   function changeActiveTab(tab) {
     if (!validTabs.has(tab)) {
