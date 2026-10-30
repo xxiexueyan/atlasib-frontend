@@ -22,4 +22,16 @@ export function calculateHarmonizedPlan(programIds, options = {}) {
   return client.post('/harmonizer/calculate', payload)
 }
 
+export function calculateMultiScenario(payload) {
+  if (
+    !Array.isArray(payload?.program_ids) ||
+    payload.program_ids.length < 1 ||
+    payload.program_ids.length > 50
+  ) {
+    throw new RangeError('多方案排课需要 1 到 50 个已选专业。')
+  }
+
+  return client.post('/harmonizer/calculate-multi-scenario', payload)
+}
+
 export const calculateHarmonizer = calculateHarmonizedPlan

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   AlertCircle,
   ArrowLeft,
@@ -13,6 +14,9 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { submitDiagnosis } from '../api/diagnose.js'
+import { getPrograms } from '../api/dictionary.js'
+import { formatLocalAnnualTuition } from '../api/programCost.js'
+import SoftEmailCaptureCard from '../components/common/SoftEmailCaptureCard.jsx'
 import { usePlan } from '../context/PlanContext.jsx'
 
 const languageOptions = [
@@ -232,6 +236,7 @@ function LanguagePicker({
   customValue,
   onChange,
   onCustomChange,
+  t,
 }) {
   return (
     <div className="space-y-2">
@@ -249,7 +254,7 @@ function LanguagePicker({
                 : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500'
             }`}
           >
-            {language === 'Other' ? '其他' : language}
+            {language === 'Other' ? t('wizard.custom_language') : language}
           </button>
         ))}
       </div>
@@ -258,8 +263,8 @@ function LanguagePicker({
           type="text"
           value={customValue}
           onChange={(event) => onCustomChange(event.target.value)}
-          aria-label={`${label}（请输入语言名称）`}
-          placeholder="请输入语言名称，例如 Arabic"
+          aria-label={`${label} (${t('wizard.language_placeholder')})`}
+          placeholder={t('wizard.language_placeholder')}
           className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-cyan-500 focus:outline-none"
         />
       )}
@@ -273,18 +278,40 @@ function getRecommendedPrograms(result) {
   return Array.isArray(programs) ? programs : []
 }
 
-function getProgramName(program) {
-  return (
-    program.program_name_zh ??
-    program.program_name ??
-    program.programName ??
-    program.name ??
-    '推荐专业'
-  )
+function getProgramName(program, t, language) {
+  const names =
+    language === 'zh'
+      ? [
+          program.program_name_zh,
+          program.name_cn,
+          program.program_name,
+          program.programName,
+          program.name_en,
+          program.name,
+        ]
+      : [
+          program.name_en,
+          program.program_name,
+          program.programName,
+          program.name,
+          program.program_name_zh,
+          program.name_cn,
+        ]
+  return names.find(Boolean) ?? t('programs.program_name_missing')
 }
 
-function getUniversityName(program) {
-  return program.university_name ?? program.universityName ?? program.university ?? ''
+function getUniversityName(program, language) {
+  return language === 'zh'
+    ? program.university_name_zh ??
+        program.university_name ??
+        program.universityName ??
+        program.university ??
+        ''
+    : program.university_name_en ??
+        program.university_name ??
+        program.universityName ??
+        program.university ??
+        ''
 }
 
 function getProgramIds(programs) {
@@ -298,7 +325,7 @@ function getProgramIds(programs) {
   ]
 }
 
-function getDiagnosisErrorMessage(error) {
+function getDiagnosisErrorMessage(error, t) {
   const detail = error?.response?.data?.detail
 
   if (typeof detail === 'string') return detail
@@ -307,7 +334,7 @@ function getDiagnosisErrorMessage(error) {
     return detail
       .map((item) => {
         const location = Array.isArray(item?.loc) ? item.loc.join(' → ') : ''
-        const message = item?.msg ?? '参数校验失败'
+        const message = item?.msg ?? t('errors.validation_failed')
         return location ? `${location}: ${message}` : message
       })
       .join('；')
@@ -321,10 +348,12 @@ function getDiagnosisErrorMessage(error) {
     return details ? `${apiError.message} ${details}` : apiError.message
   }
 
-  return error instanceof Error ? error.message : '请求暂时不可用。'
+  return error instanceof Error ? error.message : t('errors.request_failed')
 }
 
 export default function WizardView() {
+  const { t, i18n } = useTranslation()
+  const copy = (text) => t(`wizard.copy.${text}`, { defaultValue: text })
   const [step, setStep] = useState(0)
   const {
     wizardAnswers,
@@ -334,6 +363,7 @@ export default function WizardView() {
     currentProfileId,
     clientDeviceId,
     saveProfileId,
+    clearSelectedPrograms,
     selectedProgramIds,
     toggleProgram,
     batchApplyDiagnosisPrograms,
@@ -343,6 +373,7 @@ export default function WizardView() {
   const mutation = useMutation({
     mutationFn: submitDiagnosis,
     onSuccess: async (result) => {
+      clearSelectedPrograms()
       setDiagnosisResult(result)
       setStep(questions.length)
       if (result.profile_id) await saveProfileId(result.profile_id)
@@ -365,6 +396,39 @@ export default function WizardView() {
   const result = diagnosisResult
   const programs = getRecommendedPrograms(result)
   const programIds = getProgramIds(programs)
+  const recommendedCostQuery = useQuery({
+    queryKey: ['diagnosis-program-costs', programIds],
+    enabled: programIds.length > 0 && Boolean(result),
+    queryFn: async () => {
+      const costPrograms = new Map()
+      const pageSize = 100
+      let offset = 0
+      let total = Number.POSITIVE_INFINITY
+
+      while (offset < total && costPrograms.size < programIds.length) {
+        const response = await getPrograms({ limit: pageSize, offset })
+        const page = Array.isArray(response)
+          ? response
+          : response?.items ?? response?.programs ?? []
+        if (!Array.isArray(page)) {
+          throw new TypeError(t('errors.invalid_program_response'))
+        }
+
+        for (const program of page) {
+          const id = program.program_id ?? program.programId ?? program.id
+          if (programIds.includes(id)) costPrograms.set(id, program)
+        }
+
+        total = Array.isArray(response)
+          ? page.length
+          : response?.total ?? offset + page.length
+        if (page.length < pageSize) break
+        offset += page.length
+      }
+
+      return costPrograms
+    },
+  })
 
   function updateAnswer(key, value) {
     setWizardAnswers((currentAnswers) => ({
@@ -423,7 +487,7 @@ export default function WizardView() {
               className="flex items-center gap-1.5 text-sm font-bold text-cyan-300"
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" />
-              专属诊断报告
+              {t('wizard.report')}
             </h2>
             <button
               type="button"
@@ -435,18 +499,20 @@ export default function WizardView() {
               className="flex items-center gap-1 text-[11px] text-slate-400 transition hover:text-white"
             >
               <RefreshCw className="h-3 w-3" aria-hidden="true" />
-              重新答题
+              {t('wizard.restart')}
             </button>
           </div>
 
           <div>
-            <p className="text-xs text-slate-300">当前诊断的 IB 目标区间</p>
+            <p className="text-xs text-slate-300">{t('wizard.score_range')}</p>
             <p className="mt-1 text-2xl font-black text-white">
               {minScore ?? '—'} – {maxScore ?? '—'}
-              <span className="ml-1 text-sm font-semibold text-cyan-300">分</span>
+              <span className="ml-1 text-sm font-semibold text-cyan-300">
+                {t('wizard.grade_unit')}
+              </span>
             </p>
             <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
-              这是一份基于问卷信息的初步参考，不代表录取保证或最终校内预估分。
+              {t('wizard.score_note')}
             </p>
           </div>
 
@@ -454,7 +520,7 @@ export default function WizardView() {
             <div className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/80 p-3">
               <h3 className="flex items-center gap-1 text-xs font-semibold text-indigo-300">
                 <Lightbulb className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
-                推荐依据
+                {t('wizard.reasoning')}
               </h3>
               {reasoning.map((point, index) => (
                 <p key={`${point}-${index}`} className="text-[11px] leading-relaxed text-slate-300">
@@ -468,7 +534,7 @@ export default function WizardView() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <GraduationCap className="h-4 w-4 text-indigo-400" aria-hidden="true" />
-            <h3 className="text-xs font-bold text-white">推荐大学与专业</h3>
+            <h3 className="text-xs font-bold text-white">{t('wizard.recommendations')}</h3>
           </div>
           {programs.length > 0 ? (
             <>
@@ -482,7 +548,7 @@ export default function WizardView() {
                     <article
                       key={
                         programId ??
-                        `${getProgramName(program)}-${index}`
+                        `${getProgramName(program, t, i18n.language)}-${index}`
                       }
                       className={`rounded-2xl border p-3 ${
                         isSelected
@@ -493,10 +559,10 @@ export default function WizardView() {
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <h4 className="text-xs font-bold text-white">
-                            {getUniversityName(program) || '院校信息待补充'}
+                            {getUniversityName(program, i18n.language) || t('programs.university_missing')}
                           </h4>
                           <p className="mt-1 text-[11px] font-semibold text-indigo-300">
-                            {getProgramName(program)}
+                            {getProgramName(program, t, i18n.language)}
                           </p>
                           {(program.country_name ?? program.countryName) && (
                             <span className="mt-2 inline-block rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
@@ -524,12 +590,12 @@ export default function WizardView() {
                             {isSelected ? (
                               <>
                                 <Check className="h-3 w-3" aria-hidden="true" />
-                                已在志愿车
+                                {t('programs.selected_badge')}
                               </>
                             ) : (
                               <>
                                 <Plus className="h-3 w-3" aria-hidden="true" />
-                                加入志愿
+                                {t('programs.add')}
                               </>
                             )}
                           </button>
@@ -538,19 +604,29 @@ export default function WizardView() {
                       <div className="mt-2 space-y-1 rounded-xl bg-slate-950 p-2 text-[10px] text-slate-300">
                         {program.min_predicted !== undefined && (
                           <p>
-                            录取预估门槛：
+                            {t('wizard.admission_threshold')}
                             <span className="font-bold text-emerald-400">
-                              {program.min_predicted} 分+
+                              {program.min_predicted}+
                             </span>
                           </p>
                         )}
-                        {program.est_annual_rmb !== undefined && (
-                          <p>折合年开销：约 {program.est_annual_rmb} 万人民币</p>
-                        )}
+                        <p>
+                          {t('common.tuition')}
+                          {recommendedCostQuery.isPending
+                            ? t('common.loading')
+                            : recommendedCostQuery.isError
+                              ? t('wizard.tuition_unavailable')
+                              : formatLocalAnnualTuition(
+                                  recommendedCostQuery.data?.get(programId) ??
+                                    program,
+                                  t,
+                                  i18n.language,
+                                )}
+                        </p>
                         {Array.isArray(program.fit_reasons) &&
                           program.fit_reasons.length > 0 && (
                             <p className="pt-0.5 text-slate-400">
-                              推荐理由：{program.fit_reasons[0]}
+                              {t('wizard.fit_reason')} {program.fit_reasons[0]}
                             </p>
                           )}
                       </div>
@@ -564,23 +640,23 @@ export default function WizardView() {
                 onClick={() => batchApplyDiagnosisPrograms(selectedProgramIds)}
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 px-4 py-3 text-xs font-bold text-white transition hover:from-indigo-500 hover:to-cyan-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                保存已选志愿并开始排课
+                {t('wizard.save_and_plan')}
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
               {selectedProgramIds.length === 0 && programIds.length > 0 && (
                 <p className="text-center text-[11px] text-amber-300">
-                  请先选择想加入志愿车的推荐专业。
+                  {t('wizard.choose_recommended')}
                 </p>
               )}
               {programIds.length === 0 && (
                 <p className="text-center text-[11px] text-amber-300">
-                  推荐结果未包含可载入的专业 ID，请先到专业库选择志愿。
+                  {t('wizard.no_program_ids')}
                 </p>
               )}
             </>
           ) : (
             <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs text-slate-400">
-              诊断接口暂未返回推荐专业，可前往专业库手动选择目标。
+              {t('wizard.no_recommendations')}
             </div>
           )}
           <button
@@ -592,8 +668,11 @@ export default function WizardView() {
             }}
             className="w-full rounded-xl border border-slate-700 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 active:scale-95 disabled:opacity-50"
           >
-            修改答案
+            {t('wizard.edit_answers')}
           </button>
+        </div>
+        <div className="pt-2">
+          <SoftEmailCaptureCard />
         </div>
       </section>
     )
@@ -617,19 +696,21 @@ export default function WizardView() {
     <section className="space-y-4 pb-24" aria-labelledby="wizard-heading">
       <div className="space-y-1">
         <p className="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-          从兴趣到专业方向
+          {t('wizard.section')}
         </p>
         <h2 id="wizard-heading" className="text-lg font-bold text-white">
-          零基础升学向导
+          {t('wizard.title')}
         </h2>
         <p className="text-xs leading-relaxed text-slate-400">
-          用 6 个简单问题和语言背景信息梳理目标。每一步都可以返回修改。
+          {t('wizard.subtitle')}
         </p>
       </div>
 
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs text-slate-400">
-          <span className="font-semibold text-cyan-300">第 {step + 1} / {questions.length} 步</span>
+          <span className="font-semibold text-cyan-300">
+            {t('common.step_of', { current: step + 1, total: questions.length })}
+          </span>
           <span>{Math.round(((step + 1) / questions.length) * 100)}%</span>
         </div>
         <div
@@ -638,7 +719,7 @@ export default function WizardView() {
           aria-valuemin={1}
           aria-valuemax={questions.length}
           aria-valuenow={step + 1}
-          aria-label="问卷进度"
+          aria-label={t('wizard.progress')}
         >
           <div
             className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all"
@@ -648,18 +729,18 @@ export default function WizardView() {
       </div>
 
       <fieldset className="space-y-3 rounded-2xl border border-indigo-900/50 bg-gradient-to-b from-indigo-950/50 to-slate-900 p-4">
-        <legend className="sr-only">{currentQuestion.title}</legend>
+        <legend className="sr-only">{copy(currentQuestion.title)}</legend>
         <div>
           <h3 className="text-sm font-bold leading-snug text-white">
-            {currentQuestion.title}
+            {copy(currentQuestion.title)}
           </h3>
-          <p className="mt-1 text-xs text-slate-400">{currentQuestion.subtitle}</p>
+          <p className="mt-1 text-xs text-slate-400">{copy(currentQuestion.subtitle)}</p>
         </div>
 
         {currentQuestion.type === 'language' ? (
           <div className="space-y-5">
             <LanguagePicker
-              label="第一母语（Group 1）"
+              label={t('wizard.group1_language')}
               value={wizardAnswers.primaryLanguage}
               customValue={wizardAnswers.primaryLanguageCustom ?? ''}
               onChange={(value) =>
@@ -668,10 +749,11 @@ export default function WizardView() {
               onCustomChange={(value) =>
                 updateLanguageAnswer('primaryLanguageCustom', value)
               }
+              t={t}
             />
             <div className="space-y-2">
               <p className="text-xs font-semibold text-slate-200">
-                母语掌握程度
+                {t('wizard.language_level_primary')}
               </p>
               <div className="grid grid-cols-2 gap-2">
                 {primaryLanguageLevels.map((option) => {
@@ -692,10 +774,10 @@ export default function WizardView() {
                       }`}
                     >
                       <span className="block text-xs font-bold">
-                        {option.label}
+                        {copy(option.label)}
                       </span>
                       <span className="mt-1 block text-[10px] leading-relaxed text-slate-400">
-                        {option.description}
+                        {copy(option.description)}
                       </span>
                     </button>
                   )
@@ -703,7 +785,7 @@ export default function WizardView() {
               </div>
             </div>
             <LanguagePicker
-              label="常用第二语言（Group 2）"
+              label={t('wizard.group2_language')}
               value={wizardAnswers.secondaryLanguage}
               customValue={wizardAnswers.secondaryLanguageCustom ?? ''}
               onChange={(value) =>
@@ -712,10 +794,11 @@ export default function WizardView() {
               onCustomChange={(value) =>
                 updateLanguageAnswer('secondaryLanguageCustom', value)
               }
+              t={t}
             />
             <div className="space-y-2">
               <p className="text-xs font-semibold text-slate-200">
-                第二语言掌握程度与选课倾向
+                {t('wizard.language_level_secondary')}
               </p>
               {secondaryLanguageLevels.map((option) => {
                 const selected =
@@ -735,10 +818,10 @@ export default function WizardView() {
                     }`}
                   >
                     <span className="block text-xs font-bold">
-                      {option.label}
+                      {copy(option.label)}
                     </span>
                     <span className="mt-1 block text-[11px] leading-relaxed text-slate-400">
-                      {option.description}
+                      {copy(option.description)}
                     </span>
                   </button>
                 )
@@ -772,9 +855,9 @@ export default function WizardView() {
                     {selected && <Check className="h-2.5 w-2.5" aria-hidden="true" />}
                   </span>
                   <span>
-                    <span className="block text-xs font-bold">{option.label}</span>
+                    <span className="block text-xs font-bold">{copy(option.label)}</span>
                     <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-400">
-                      {option.description}
+                      {copy(option.description)}
                     </span>
                   </span>
                 </button>
@@ -788,9 +871,9 @@ export default function WizardView() {
         <div role="alert" className="flex gap-2 rounded-xl border border-red-800 bg-red-950/40 p-3 text-xs text-red-200">
           <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
           <div>
-            <p>诊断提交失败，请检查网络后重试。</p>
+            <p>{t('wizard.diagnosis_failed')}</p>
             <p className="mt-1 text-[11px] text-red-300">
-              {getDiagnosisErrorMessage(mutation.error)}
+              {getDiagnosisErrorMessage(mutation.error, t)}
             </p>
           </div>
         </div>
@@ -804,7 +887,7 @@ export default function WizardView() {
           className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2.5 text-xs text-slate-300 transition hover:bg-slate-800 active:scale-95 disabled:opacity-40"
         >
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-          上一步
+          {t('common.back')}
         </button>
 
         {step < questions.length - 1 ? (
@@ -814,7 +897,7 @@ export default function WizardView() {
             onClick={() => setStep((current) => current + 1)}
             className="flex items-center gap-1 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 px-4 py-2.5 text-xs font-bold text-white transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            下一步
+            {t('common.next')}
             <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         ) : (
@@ -827,11 +910,11 @@ export default function WizardView() {
             {mutation.isPending ? (
               <>
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                正在生成报告
+                {t('wizard.submitting')}
               </>
             ) : (
               <>
-                生成诊断报告
+                {t('wizard.submit')}
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </>
             )}
@@ -840,7 +923,7 @@ export default function WizardView() {
       </div>
       {!isComplete && step === questions.length - 1 && (
         <p className="text-right text-[11px] text-amber-300">
-          请先完成全部问题及语言背景信息。
+          {t('wizard.all_required')}
         </p>
       )}
     </section>

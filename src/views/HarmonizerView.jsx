@@ -1,173 +1,237 @@
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
-  AlertCircle,
   AlertTriangle,
-  BookOpenCheck,
   CheckCircle2,
-  CircleAlert,
+  Download,
+  GraduationCap,
   LoaderCircle,
-  Minus,
+  Plus,
+  Save,
+  SlidersHorizontal,
   Target,
+  X,
 } from 'lucide-react'
 import { getPrograms } from '../api/dictionary.js'
-import { calculateHarmonizedPlan } from '../api/harmonizer.js'
+import { calculateMultiScenario } from '../api/harmonizer.js'
+import SoftEmailCaptureCard from '../components/common/SoftEmailCaptureCard.jsx'
 import {
   getHarmonizerErrorMessage,
-  getLanguageDowngradeWarnings,
-  getRecommendedSubjectMatrix,
+  getProgramFitStatus,
+  getProgramLanguageTip,
+  getSelectedScenarioId,
+  requiresExternalLanguageStudy,
 } from '../api/harmonizerData.js'
-import {
-  getExplicitLanguagePayload,
-  getLanguagePayload,
-} from '../api/language.js'
 import { userProgramApi } from '../api/userPrograms.js'
 import { usePlan } from '../context/PlanContext.jsx'
 
-const subjectGuides = {
-  MATH_AA: {
-    name: '数学 AA',
-    role: '数学推理与分析能力是计算机、工程等专业的重要基础。',
-    pitfall: '不要只刷熟悉题型；留意无计算器题、书写步骤和内部评估（IA）的评分要求。',
-    actions: [
-      '分主题整理错题，注明错误类型、正确思路和复盘日期。',
-      '交替练习代数、函数、三角、微积分等题型，并定期限时完成整卷。',
-      'IA 选题应范围明确、数学过程可解释；提前按评分标准检查论证与反思。',
-    ],
-  },
-  PHYSICS: {
-    name: '物理',
-    role: '工程及理工方向常见的基础学科，帮助建立定量建模能力。',
-    pitfall: '只背公式容易在陌生情境题失分；作答时还需说明模型、单位和物理含义。',
-    actions: [
-      '按主题制作公式与概念表，练习从题目条件判断适用模型。',
-      '完成实验题时规范记录变量、误差、不确定度及数据结论。',
-      '练习历年题并对照评分标准，逐项检查单位、有效数字和解释。',
-    ],
-  },
-  CHEMISTRY: {
-    name: '化学',
-    role: '部分工程和自然科学专业的先修科目，选课前确认目标专业要求。',
-    pitfall: '公式、概念和有机反应需要持续复习；IA 要注意变量控制与数据质量。',
-    actions: [
-      '为反应类型、官能团和核心概念建立分主题复习卡。',
-      '定期练习化学计量、平衡和数据分析题，写出完整推导。',
-      'IA 提前确认实验可行性，记录原始数据并解释误差来源。',
-    ],
-  },
-  CS: {
-    name: '计算机科学',
-    role: '通过编程、系统和算法知识展示计算思维与应用能力。',
-    pitfall: 'IA 不能只展示成品；要清楚体现真实用户需求、开发过程和测试反馈。',
-    actions: [
-      '将抽象概念与小型代码练习结合，注重解释数据结构及算法选择。',
-      '做 IA 时记录用户沟通、需求变化、测试用例和迭代过程。',
-      '复习案例研究时练习把技术影响、限制与伦理考量联系起来。',
-    ],
-  },
+function asList(value) {
+  return Array.isArray(value) ? value : []
 }
 
-function normalizeList(value) {
-  if (Array.isArray(value)) return value
-  return []
+function getProgramId(program) {
+  return program?.program_id ?? program?.programId ?? program?.id
 }
 
-function getDisplaySubjects(subjects) {
-  return [...subjects].sort((left, right) => {
-    const getGroupOrder = (subject) => {
-      const group = Number(subject.group_number ?? subject.groupNumber)
-      return group === 1 ? 0 : group === 2 ? 1 : 2
-    }
-    return getGroupOrder(left) - getGroupOrder(right)
-  })
-}
-
-function getConflictText(conflict, key, fallback) {
-  const value = conflict?.[key]
-  return typeof value === 'string' && value.trim() ? value : fallback
-}
-
-function getConflictProgramIds(conflict, selectedIds) {
-  const ids =
-    conflict?.affected_program_ids ??
-    conflict?.conflicting_program_ids ??
-    conflict?.involved_program_ids ??
-    conflict?.program_ids ??
-    conflict?.affected_programs ??
-    conflict?.involved_programs
-
-  if (!Array.isArray(ids)) return selectedIds
-
-  const normalizedIds = ids
-    .map((item) =>
-      typeof item === 'string'
-        ? item
-        : item?.program_id ?? item?.programId ?? item?.id,
-    )
-    .filter((id) => typeof id === 'string')
-
-  const selectedSet = new Set(selectedIds)
-  const matchingIds = normalizedIds.filter((id) => selectedSet.has(id))
-  return matchingIds.length > 0 ? matchingIds : selectedIds
-}
-
-function getProgramName(program) {
+function getProgramDisplayName(program, t) {
+  const university =
+    program?.university_name ??
+    program?.universityName ??
+    t('programs.university_missing')
   const name =
     program?.program_name ??
+    program?.name_en ??
     program?.name_cn ??
     program?.program_name_zh ??
     program?.programName ??
-    program?.name_en
-  const university =
-    program?.university_name ?? program?.universityName ?? program?.uniName
-
-  if (university && name) return `${university} · ${name}`
-  return name ?? university ?? program?.program_id ?? program?.id
+    t('programs.program_name_missing')
+  return `${university} · ${name}`
 }
 
-function getSubjectGuide(subject) {
-  const code = subject.subject_code ?? subject.subjectCode
-  return subjectGuides[code] ?? {
-    name: subject.subject_name ?? subject.subjectName ?? 'IB 科目',
-    role: '根据当前选课方案中的目标要求进行针对性准备。',
-    pitfall: '目标分及课程难度应结合学校课程大纲和教师反馈持续调整。',
-    actions: [
-      '拆分知识点，制定每周复习与练习计划。',
-      '完成阶段练习后对照评分标准订正并整理错题。',
-      '提前规划内部评估任务，按节点向任课教师确认反馈。',
-    ],
-  }
+function getWorkloadLabel(level, t) {
+  return (
+    {
+      EXTREME: t('harmonizer.workload_extreme'),
+      HIGH: t('harmonizer.workload_high'),
+      BALANCED: t('harmonizer.workload_balanced'),
+    }[level] ?? t('harmonizer.workload_unknown')
+  )
+}
+
+function getWorkloadClass(level) {
+  return (
+    {
+      EXTREME: 'text-red-300',
+      HIGH: 'text-amber-300',
+      BALANCED: 'text-emerald-300',
+    }[level] ?? 'text-slate-300'
+  )
+}
+
+function getErrorInfo(error, t) {
+  return getHarmonizerErrorMessage(error, t)
+}
+
+function ProgramFitCard({ program, covered, onRemove, removing }) {
+  const { t, i18n } = useTranslation()
+  const fitStatus = getProgramFitStatus(program, covered)
+  const needsExternalLanguageTest =
+    fitStatus === 'SUBJECT_FIT_EXTERNAL_LANG_REQ'
+  const isUnfit = fitStatus === 'UNFIT'
+  const statusClass = needsExternalLanguageTest
+    ? 'border-cyan-800/60'
+    : isUnfit
+      ? 'border-amber-900/60'
+      : 'border-emerald-900/40'
+  const badgeClass = needsExternalLanguageTest
+    ? 'border-cyan-700 bg-cyan-950 text-cyan-300'
+    : isUnfit
+      ? 'border-amber-800 bg-amber-950 text-amber-300'
+      : 'border-emerald-800 bg-emerald-950 text-emerald-300'
+  const badgeLabel = needsExternalLanguageTest
+    ? `⚠️ ${t('status_badges.subject_fit_lang_req')}`
+    : isUnfit
+      ? `❌ ${t('status_badges.unfit')}`
+      : `✅ ${t('status_badges.fully_covered')}`
+
+  return (
+    <article
+      className={`space-y-2.5 rounded-2xl border bg-slate-900/90 p-3.5 shadow-sm ${statusClass}`}
+    >
+      <div className="flex items-start justify-between gap-2.5">
+        <div className="min-w-0 flex-1 space-y-1 pr-2">
+          <div className="flex items-center gap-1.5">
+            <span className="shrink-0 text-sm" aria-hidden="true">
+              {program.flag_emoji || '🌐'}
+            </span>
+            <h4 className="min-w-0 text-xs font-bold leading-snug tracking-tight text-white sm:text-sm">
+              {program.university_name}
+            </h4>
+          </div>
+          <div className="mt-0.5 text-[11px] font-medium leading-normal text-slate-300 sm:text-xs">
+            {program.program_name}
+          </div>
+        </div>
+        <div className="shrink-0 pt-0.5">
+          <span
+            className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 py-0.5 text-[10px] font-medium shadow-sm ${badgeClass}`}
+          >
+            {badgeLabel}
+          </span>
+        </div>
+      </div>
+      {isUnfit && onRemove && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => onRemove(program.program_id)}
+            disabled={removing}
+            className="text-[10px] text-slate-400 underline underline-offset-2 hover:text-white disabled:opacity-50"
+          >
+            {t('harmonizer.remove')}
+          </button>
+        </div>
+      )}
+      {needsExternalLanguageTest && (
+        <div className="mt-2.5 w-full space-y-1 rounded-xl border border-slate-800/80 bg-slate-950/80 p-2.5 text-[11px] leading-relaxed text-slate-300">
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-cyan-400">
+            <span aria-hidden="true">💡</span>
+            <span>{t('harmonizer.language_tip')}</span>
+          </div>
+          <p className="pl-4 text-[11px] leading-relaxed text-slate-300">
+            {getProgramLanguageTip(program, t, i18n.language)}
+          </p>
+        </div>
+      )}
+      {isUnfit && program.unfit_reason && (
+        <p className="mt-2.5 w-full rounded-xl border border-amber-900/40 bg-slate-950/70 p-2.5 text-xs leading-relaxed text-amber-100/90">
+          <strong>{t('harmonizer.unfit_reason')}</strong> {program.unfit_reason}
+        </p>
+      )}
+    </article>
+  )
+}
+
+function ScenarioPrintCard({ scenario, selectedProgramIds, t, language }) {
+  if (!scenario) return null
+
+  return (
+    <div className="scenario-print-card">
+      <h1>AtlasIB · {scenario.name}</h1>
+      <p>{scenario.strategy_tag}</p>
+      <p>
+        {t('harmonizer.coverage')} {scenario.coverage_rate_percent}% ·{' '}
+        {asList(scenario.covered_programs).length}/
+        {selectedProgramIds.length} {t('programs.selected')}
+      </p>
+      <h2>{t('harmonizer.covered', { count: asList(scenario.covered_programs).length })}</h2>
+      <ul>
+        {asList(scenario.covered_programs).map((program) => (
+          <li key={program.program_id}>
+            {program.university_name} · {program.program_name} ·{' '}
+            {getProgramFitStatus(program, true) ===
+            'SUBJECT_FIT_EXTERNAL_LANG_REQ'
+              ? t('status_badges.subject_fit_lang_req')
+              : t('status_badges.fully_covered')}
+            {getProgramFitStatus(program, true) ===
+              'SUBJECT_FIT_EXTERNAL_LANG_REQ' &&
+              `: ${getProgramLanguageTip(program, t, language)}`}
+          </li>
+        ))}
+      </ul>
+      <h2>{t('harmonizer.uncovered', { count: asList(scenario.uncovered_programs).length })}</h2>
+      <ul>
+        {asList(scenario.uncovered_programs).map((program) => (
+          <li key={program.program_id}>
+            {program.university_name} · {program.program_name}：
+            {program.unfit_reason}
+          </li>
+        ))}
+      </ul>
+      <h2>{t('harmonizer.subjects', { name: scenario.name })}</h2>
+      <ol>
+        {asList(scenario.subjects).map((subject) => (
+          <li key={subject.subject_code}>
+            Group {subject.group_number} · {subject.subject_name} ·{' '}
+            {subject.level} · {t('harmonizer.target_grade', { grade: subject.target_grade })}
+            {subject.advisory_notes ? ` · ${subject.advisory_notes}` : ''}
+          </li>
+        ))}
+      </ol>
+      <h2>{t('harmonizer.strategy')}</h2>
+      <p>{scenario.strategic_summary}</p>
+      <p>{getWorkloadLabel(scenario.workload_level, t)}</p>
+    </div>
+  )
 }
 
 export default function HarmonizerView() {
+  const { t, i18n } = useTranslation()
   const {
     selectedProgramIds,
     setActiveTab,
     toggleProgram,
+    removeProgramsFromSelection,
     currentProfileId,
-    wizardAnswers,
     diagnosisResult,
     isSyncingPrograms,
+    activeScenario,
+    activeScenarioIsStale,
+    applyScenarioAsActive,
   } = usePlan()
-  const languagePayload = getLanguagePayload(wizardAnswers)
-  const hasExplicitLanguages = Boolean(
-    getExplicitLanguagePayload(wizardAnswers),
-  )
+  const [scenarioSelection, setScenarioSelection] = useState(null)
+  const [applyError, setApplyError] = useState('')
 
-  const query = useQuery({
-    queryKey: [
-      'harmonized-plan',
-      selectedProgramIds,
-      currentProfileId,
-      languagePayload,
-    ],
+  const harmonizeQuery = useQuery({
+    queryKey: ['harmonize_multi', selectedProgramIds, currentProfileId],
     queryFn: () =>
-      calculateHarmonizedPlan(selectedProgramIds, {
-        profileId: currentProfileId,
-        answers: wizardAnswers,
+      calculateMultiScenario({
+        program_ids: selectedProgramIds,
+        ...(currentProfileId ? { profile_id: currentProfileId } : {}),
       }),
-    enabled:
-      selectedProgramIds.length > 0 &&
-      (Boolean(currentProfileId) || hasExplicitLanguages),
+    enabled: selectedProgramIds.length > 0 && selectedProgramIds.length <= 50,
+    retry: false,
   })
 
   const selectedProgramsQuery = useQuery({
@@ -177,509 +241,558 @@ export default function HarmonizerView() {
   })
 
   const catalogQuery = useQuery({
-    queryKey: ['programs', 'harmonizer-labels'],
+    queryKey: ['programs', 'multi-scenario-labels'],
     queryFn: async () => {
       const response = await getPrograms({ limit: 100 })
       return Array.isArray(response)
         ? response
         : response?.items ?? response?.programs ?? []
     },
-    enabled: !currentProfileId,
   })
 
-  const programDetails = new Map()
-  for (const program of selectedProgramsQuery.data ?? []) {
-    programDetails.set(
-      program.program_id ?? program.programId ?? program.id,
-      program,
-    )
-  }
-  for (const program of diagnosisResult?.recommended_programs ?? []) {
-    const id = program.program_id ?? program.programId ?? program.id
-    if (!programDetails.has(id)) programDetails.set(id, program)
-  }
-  for (const program of catalogQuery.data ?? []) {
-    const id = program.program_id ?? program.programId ?? program.id
-    if (!programDetails.has(id)) programDetails.set(id, program)
-  }
-
-  async function removeProgramFromConflict(programId) {
-    const result = await toggleProgram(programId)
-    if (result?.success && currentProfileId) {
-      await selectedProgramsQuery.refetch()
-    }
-  }
-
-  const plan = query.data
-  const conflicts = normalizeList(plan?.conflicts)
-  const warnings = normalizeList(plan?.warnings)
-  const subjects = getRecommendedSubjectMatrix(plan)
-  const displaySubjects = getDisplaySubjects(subjects)
-  const languageDowngradeWarnings = getLanguageDowngradeWarnings(warnings)
-  const otherWarnings = warnings.filter(
-    (warning) =>
-      (warning?.rule_code ?? warning?.ruleCode) !==
-      'SECOND_LANGUAGE_HL_DOWNGRADED',
+  const harmonizeData = harmonizeQuery.data
+  const scenarios = asList(harmonizeData?.scenarios)
+  const activeScenarioId = getSelectedScenarioId(
+    scenarioSelection,
+    harmonizeData,
   )
-  const courseValidation = plan?.course_validation
+
+  const currentScenario = useMemo(
+    () =>
+      scenarios.find((scenario) => scenario.scenario_id === activeScenarioId) ??
+      scenarios[0] ??
+      null,
+    [scenarios, activeScenarioId],
+  )
+
+  const programDetails = useMemo(() => {
+    const details = new Map()
+    for (const program of selectedProgramsQuery.data ?? []) {
+      details.set(getProgramId(program), program)
+    }
+    for (const program of diagnosisResult?.recommended_programs ?? []) {
+      if (!details.has(getProgramId(program))) {
+        details.set(getProgramId(program), program)
+      }
+    }
+    for (const program of catalogQuery.data ?? []) {
+      if (!details.has(getProgramId(program))) {
+        details.set(getProgramId(program), program)
+      }
+    }
+    return details
+  }, [
+    selectedProgramsQuery.data,
+    diagnosisResult,
+    catalogQuery.data,
+  ])
+
+  async function removeSelectedProgram(programId) {
+    await toggleProgram(programId)
+  }
+
+  async function removeInvalidPrograms(programIds) {
+    await removeProgramsFromSelection(programIds)
+    await selectedProgramsQuery.refetch()
+  }
+
+  function saveCurrentScenario() {
+    setApplyError('')
+    const result = applyScenarioAsActive(currentScenario)
+    if (!result.success) setApplyError(result.error)
+  }
+
+  function exportScenario() {
+    window.print()
+  }
+
+  const errorInfo = harmonizeQuery.isError
+    ? getErrorInfo(harmonizeQuery.error, t)
+    : null
+  const coveredPrograms = asList(currentScenario?.covered_programs)
+  const uncoveredPrograms = asList(currentScenario?.uncovered_programs)
+  const subjects = asList(currentScenario?.subjects)
+  const invalidProgramIds = errorInfo?.programIds ?? []
+  const isCurrentScenarioSaved =
+    Boolean(activeScenario) &&
+    !activeScenarioIsStale &&
+    activeScenario.scenario_id === currentScenario?.scenario_id
 
   if (selectedProgramIds.length === 0) {
     return (
       <section className="rounded-2xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-200">
-        志愿车暂无专业，无法生成排课方案。
+        {t('harmonizer.no_programs')}
         <button
           type="button"
           onClick={() => setActiveTab('programs')}
           className="ml-2 font-semibold text-cyan-300 underline underline-offset-2"
         >
-          去选择专业
+          {t('harmonizer.choose_programs')}
         </button>
       </section>
     )
   }
 
-  if (!currentProfileId && !hasExplicitLanguages) {
+  if (selectedProgramIds.length > 50) {
     return (
-      <section className="space-y-3 rounded-2xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-100">
-        <h2 className="font-bold">请先完成诊断</h2>
-        <p className="text-xs leading-relaxed text-amber-200/90">
-          排课需要诊断画像 ID，或明确提供第一语言和第二语言。请先完成智能向导，保存画像语言偏好后再生成排课方案。
-        </p>
+      <section className="rounded-2xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-100">
+        {t('harmonizer.too_many', { count: selectedProgramIds.length })}
         <button
           type="button"
-          onClick={() => setActiveTab('wizard')}
-          className="rounded-lg border border-amber-700 px-3 py-2 text-xs font-semibold transition hover:bg-amber-900/50"
+          onClick={() => setActiveTab('programs')}
+          className="ml-2 font-semibold text-cyan-300 underline underline-offset-2"
         >
-          前往智能向导
+          {t('harmonizer.manage')}
         </button>
       </section>
     )
   }
 
   return (
-    <section className="space-y-4 pb-24" aria-labelledby="harmonizer-heading">
-      <div>
+    <section className="space-y-4 pb-28" aria-labelledby="harmonizer-heading">
+      <style>{`
+        .scenario-print-card { display: none; }
+        @media print {
+          body * { visibility: hidden !important; }
+          .scenario-print-card, .scenario-print-card * { visibility: visible !important; }
+          .scenario-print-card {
+            display: block !important;
+            position: absolute;
+            inset: 0;
+            padding: 24px;
+            color: #111827;
+            background: white;
+            font: 12pt/1.5 sans-serif;
+          }
+          .scenario-print-card h1 { font-size: 22pt; margin-bottom: 8px; }
+          .scenario-print-card h2 { font-size: 15pt; margin: 18px 0 6px; }
+          .scenario-print-card ul, .scenario-print-card ol { padding-left: 24px; }
+        }
+      `}</style>
+
+      <div className="space-y-2">
         <p className="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-          多志愿倒推与冲突检测
+          {t('harmonizer.section')}
         </p>
-        <h2 id="harmonizer-heading" className="mt-1 text-lg font-bold text-white">
-          IB 选课调和方案
+        <h2 id="harmonizer-heading" className="text-lg font-bold text-white">
+          {t('harmonizer.title')}
         </h2>
-        <p className="mt-1 text-xs text-slate-400">
-          正在依据志愿车中的 {selectedProgramIds.length} 个专业统筹课程要求。
+        <p className="text-xs text-slate-400">
+          {t('harmonizer.subtitle')}
         </p>
       </div>
 
-      {query.isPending && (
-        <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-8 text-sm text-slate-400">
-          <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-          正在倒推选课方案…
+      <section
+        aria-label={t('harmonizer.current_programs', { count: selectedProgramIds.length })}
+        className="space-y-2 rounded-2xl border border-slate-800 bg-slate-900 p-3"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-xs font-bold text-white">
+            {t('harmonizer.current_programs', { count: selectedProgramIds.length })}
+          </h3>
+          <button
+            type="button"
+            onClick={() => setActiveTab('programs')}
+            className="flex items-center gap-1 text-[10px] font-semibold text-cyan-300"
+          >
+            <Plus className="h-3 w-3" aria-hidden="true" />
+            {t('harmonizer.add_program')}
+          </button>
+        </div>
+        <div className="flex min-w-0 flex-wrap gap-2">
+          {selectedProgramIds.map((programId) => (
+            <span
+              key={programId}
+              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-indigo-800 bg-indigo-950/60 py-1 pl-2.5 pr-1.5 text-[10px] text-indigo-100"
+            >
+              <span className="min-w-0 truncate">
+                {getProgramDisplayName(programDetails.get(programId) ?? {
+                  program_id: programId,
+                }, t)}
+              </span>
+              <button
+                type="button"
+                aria-label={`${t('common.remove')} ${programId}`}
+                title={t('harmonizer.remove')}
+                disabled={isSyncingPrograms || selectedProgramIds.length <= 1}
+                onClick={() => removeSelectedProgram(programId)}
+                className="rounded-full p-0.5 text-slate-400 hover:bg-red-900/60 hover:text-red-200 disabled:opacity-40"
+              >
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+        </div>
+      </section>
+
+      {activeScenarioIsStale && (
+        <p
+          role="status"
+          className="rounded-xl border border-amber-800 bg-amber-950/40 p-3 text-xs text-amber-200"
+        >
+          {t('harmonizer.stale')}
+        </p>
+      )}
+
+      {harmonizeQuery.isPending && (
+        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+            {t('harmonizer.loading')}
+          </div>
+          {[1, 2, 3].map((item) => (
+            <div
+              key={item}
+              className="h-12 animate-pulse rounded-xl bg-slate-800/70"
+            />
+          ))}
         </div>
       )}
 
-      {query.isError && (
+      {harmonizeQuery.isError && (
         <div
           role="alert"
-          className="flex items-start gap-2 rounded-2xl border border-red-800 bg-red-950/40 p-4 text-sm text-red-200"
+          className="space-y-3 rounded-2xl border border-red-800 bg-red-950/40 p-4 text-sm text-red-200"
         >
-          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <div>
-            <p className="font-semibold">排课方案加载失败</p>
-            <p className="mt-1 text-xs leading-relaxed text-red-300">
-              {getHarmonizerErrorMessage(query.error)}
-            </p>
+          <p className="font-bold">
+            {errorInfo.code === 'program_not_found'
+              ? t('harmonizer.program_not_found')
+              : t('harmonizer.failed')}
+          </p>
+          <p className="text-xs leading-relaxed">{errorInfo.message}</p>
+          {invalidProgramIds.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold">{t('harmonizer.invalid_programs')}</p>
+              {invalidProgramIds.map((programId) => (
+                <p key={programId} className="text-[11px] text-red-100">
+                  · {getProgramDisplayName(programDetails.get(programId) ?? {
+                    program_id: programId,
+                  }, t)}
+                </p>
+              ))}
+              <button
+                type="button"
+                disabled={isSyncingPrograms}
+                onClick={() => removeInvalidPrograms(invalidProgramIds)}
+                className="mt-2 rounded-lg border border-red-700 px-3 py-2 text-xs font-semibold hover:bg-red-900/50 disabled:opacity-50"
+              >
+                {isSyncingPrograms ? t('harmonizer.removing') : t('harmonizer.remove_invalid')}
+              </button>
+            </div>
+          )}
+          {errorInfo.code === 'profile_not_found' && (
             <button
               type="button"
-              onClick={() => query.refetch()}
-              className="mt-2 rounded-lg border border-red-700 px-2.5 py-1 text-xs transition hover:bg-red-900/50"
+              onClick={() => setActiveTab('wizard')}
+              className="rounded-lg border border-red-700 px-3 py-2 text-xs font-semibold hover:bg-red-900/50"
             >
-              重试
+              {t('harmonizer.diagnose_again')}
             </button>
-          </div>
+          )}
+          <button
+            type="button"
+            onClick={() => harmonizeQuery.refetch()}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+          >
+            {t('common.retry')}
+          </button>
         </div>
       )}
 
-      {query.isSuccess && plan && (
+      {harmonizeQuery.isSuccess && harmonizeData && (
         <>
-          <div className="space-y-3 rounded-2xl border border-indigo-600/40 bg-gradient-to-br from-indigo-950/80 via-slate-900 to-purple-950/40 p-4">
-            <div className="flex items-center gap-2">
-              <Target className="h-4 w-4 text-cyan-400" aria-hidden="true" />
-              <h3 className="text-xs font-bold text-indigo-200">统筹目标分</h3>
-            </div>
-            <div className="flex items-end justify-between gap-3">
-              <p className="text-sm text-slate-300">最高预估分基准</p>
-              <p className="text-3xl font-black text-emerald-300">
-                {plan.target_ib_score ?? '—'}
-                <span className="ml-1 text-sm font-semibold">分</span>
-              </p>
-            </div>
-            {plan.strictest_program && (
-              <p className="border-t border-slate-700/70 pt-2 text-xs text-slate-400">
-                门槛最高的志愿：{plan.strictest_program}
-              </p>
-            )}
-            {plan.hl_count !== undefined && (
-              <p className="text-xs text-slate-400">
-                方案涉及 {plan.hl_count} 门 HL 科目
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={() => setActiveTab('programs')}
-              className="text-xs font-semibold text-cyan-300 underline underline-offset-2"
-            >
-              调整志愿组合
-            </button>
-          </div>
-
-          {conflicts.length > 0 && (
+          {asList(harmonizeData.universal_warnings).length > 0 && (
             <section
-              aria-labelledby="conflicts-heading"
-              className="space-y-2"
-              aria-live="polite"
+              aria-label={t('harmonizer.universal_warnings')}
+              className="space-y-1.5 rounded-xl border border-amber-800 bg-amber-950/30 p-3"
             >
-              <h3
-                id="conflicts-heading"
-                className="flex items-center gap-1.5 text-xs font-bold text-red-300"
-              >
-                <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-                严重选课冲突：请优先查看解决方案
+              <h3 className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('harmonizer.universal_warnings')}
               </h3>
-              {conflicts.map((conflict, index) => (
-                (() => {
-                  const conflictProgramIds = getConflictProgramIds(
-                    conflict,
-                    selectedProgramIds,
-                  )
-                  const hasSpecificProgramIds = [
-                    conflict?.affected_program_ids,
-                    conflict?.conflicting_program_ids,
-                    conflict?.involved_program_ids,
-                    conflict?.program_ids,
-                    conflict?.affected_programs,
-                    conflict?.involved_programs,
-                  ].some(
-                    (ids) =>
-                      Array.isArray(ids) &&
-                      ids.some(
-                        (item) =>
-                          typeof item === 'string' ||
-                          typeof item?.program_id === 'string' ||
-                          typeof item?.programId === 'string' ||
-                          typeof item?.id === 'string',
-                      ),
-                  )
-
-                  return (
-                    <article
-                      key={conflict.rule_code ?? conflict.ruleCode ?? `${conflict.title}-${index}`}
-                      className="space-y-2.5 rounded-2xl border border-red-800 bg-red-950/40 p-3.5"
-                    >
-                      <h4 className="flex items-center gap-1.5 text-sm font-bold text-red-200">
-                        <CircleAlert className="h-4 w-4 shrink-0 text-red-400" aria-hidden="true" />
-                        {getConflictText(conflict, 'title', '存在选课冲突')}
-                      </h4>
-                      <p className="text-xs leading-relaxed text-red-100/90">
-                        {getConflictText(conflict, 'description', '请核对各目标专业的课程要求。')}
-                      </p>
-                      <div className="rounded-xl border border-emerald-800/70 bg-slate-950/90 p-3">
-                        <p className="mb-1 text-xs font-bold text-emerald-300">
-                          解冲突方案
-                        </p>
-                        <p className="whitespace-pre-line text-xs leading-relaxed text-slate-200">
-                          {getConflictText(
-                            conflict,
-                            'solution',
-                            '暂无自动建议，请向升学顾问或 IB 协调员核实。',
-                          )}
-                        </p>
-                      </div>
-                      <div className="space-y-2 rounded-xl border border-red-900/70 bg-red-950/30 p-3">
-                        <div>
-                          <p className="text-xs font-bold text-red-200">
-                            {hasSpecificProgramIds
-                              ? '涉及的志愿专业'
-                              : '当前触发冲突的志愿组合'}
-                          </p>
-                          <p className="mt-1 text-[10px] leading-relaxed text-red-200/70">
-                            {hasSpecificProgramIds
-                              ? '可直接移除不打算申请的专业，系统会按剩余志愿重新计算。'
-                              : '后端尚未标注具体冲突专业，因此先列出当前参与倒推的志愿；移除后系统会重新检测。'}
-                          </p>
-                        </div>
-                        {conflictProgramIds.map((programId) => {
-                          const program = programDetails.get(programId)
-                          return (
-                            <div
-                              key={programId}
-                              className="flex items-center justify-between gap-2 rounded-lg border border-red-900/60 bg-slate-950/80 px-2.5 py-2"
-                            >
-                              <p className="min-w-0 text-[11px] font-medium text-slate-200">
-                                {getProgramName(program) ?? programId}
-                              </p>
-                              <button
-                                type="button"
-                                disabled={isSyncingPrograms || selectedProgramIds.length <= 1}
-                                onClick={() => removeProgramFromConflict(programId)}
-                                className="flex shrink-0 items-center gap-1 rounded-lg border border-red-800 bg-red-950/60 px-2 py-1 text-[10px] font-semibold text-red-200 transition hover:bg-red-900 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                <Minus className="h-3 w-3" aria-hidden="true" />
-                                移除
-                              </button>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </article>
-                  )
-                })()
+              {harmonizeData.universal_warnings.map((warning, index) => (
+                <p
+                  key={`${warning}-${index}`}
+                  className="text-[11px] leading-relaxed text-amber-100/90"
+                >
+                  · {warning}
+                </p>
               ))}
             </section>
           )}
 
-          {languageDowngradeWarnings.map((warning, index) => (
-            <aside
-              key={`language-hl-downgrade-${index}`}
-              role="status"
-              className="space-y-1 rounded-xl border border-amber-700 bg-amber-950/40 p-3 text-amber-100"
+          {scenarios.length > 1 && (
+            <div
+              role="tablist"
+              aria-label={t('harmonizer.choose_scenario')}
+              className="grid min-w-0 grid-cols-1 gap-2"
             >
-              <h3 className="text-xs font-bold">
-                {getConflictText(
-                  warning,
-                  'title',
-                  '第二语言已协调降为 SL',
-                )}
-              </h3>
-              <p className="whitespace-pre-line text-xs leading-relaxed text-amber-200">
-                {warning.description ??
-                  warning.message ??
-                  warning.solution ??
-                  '因其他核心课程已占用 HL 名额，第二语言已自动协调为 SL。'}
-              </p>
-            </aside>
-          ))}
+              {scenarios.map((scenario) => {
+                const isActive =
+                  scenario.scenario_id === currentScenario?.scenario_id
+                const coveredCount = asList(scenario.covered_programs).length
+                return (
+                  <button
+                    key={scenario.scenario_id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() =>
+                      setScenarioSelection({
+                        data: harmonizeData,
+                        scenarioId: scenario.scenario_id,
+                      })
+                    }
+                    className={`flex min-w-0 flex-col gap-1 rounded-2xl border px-3 py-2 text-left transition ${
+                      isActive
+                        ? 'border-indigo-500 bg-gradient-to-r from-indigo-950 to-slate-900 shadow-md shadow-indigo-500/20'
+                        : 'border-slate-800 bg-slate-900/70 hover:border-slate-700'
+                    }`}
+                  >
+                    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span
+                        className={`min-w-0 text-xs font-bold ${
+                          isActive ? 'text-white' : 'text-slate-300'
+                        }`}
+                      >
+                        {scenario.name}
+                      </span>
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] text-slate-300">
+                        {scenario.strategy_tag}
+                      </span>
+                      {requiresExternalLanguageStudy(scenario) && (
+                        <span className="rounded border border-amber-700 bg-amber-950/60 px-1.5 py-0.5 text-[9px] font-bold text-amber-200">
+                          {t('harmonizer.ext_lang_required')}
+                        </span>
+                      )}
+                      {scenario.scenario_id ===
+                        harmonizeData.recommended_scenario_id && (
+                        <span className="text-[9px] text-amber-300">
+                          {t('harmonizer.recommended')}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {t('harmonizer.coverage')}{' '}
+                      <strong
+                        className={
+                          scenario.coverage_rate_percent === 100
+                            ? 'text-emerald-300'
+                            : 'text-amber-300'
+                        }
+                      >
+                        {scenario.coverage_rate_percent}%
+                      </strong>{' '}
+                      ({coveredCount}/{harmonizeData.total_selected_programs}
+                      )
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
 
-          {otherWarnings.length > 0 && (
-            <section aria-labelledby="warnings-heading" className="space-y-2">
-              <h3
-                id="warnings-heading"
-                className="flex items-center gap-1.5 text-xs font-bold text-amber-300"
-              >
-                <AlertCircle className="h-4 w-4" aria-hidden="true" />
-                院校特殊要求与避坑提醒
-              </h3>
-              {otherWarnings.map((warning, index) => (
-                <article
-                  key={warning.rule_code ?? warning.ruleCode ?? `${warning.title}-${index}`}
-                  className="space-y-1.5 rounded-xl border border-amber-800 bg-amber-950/30 p-3"
-                >
-                  <h4 className="text-xs font-bold text-amber-200">
-                    {getConflictText(warning, 'title', '院校特殊要求')}
-                  </h4>
-                  <p className="text-xs leading-relaxed text-slate-300">
-                    {getConflictText(warning, 'description', '请查看目标院校的官方要求。')}
-                  </p>
-                  {warning.solution && (
-                    <p className="whitespace-pre-line rounded-lg border border-slate-800 bg-slate-950/80 p-2 text-xs leading-relaxed text-cyan-200">
-                      <strong>建议应对：</strong> {warning.solution}
+          {currentScenario && (
+            <>
+              <section className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-3.5">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-300">
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('harmonizer.covered', { count: coveredPrograms.length })}
+                    </h3>
+                    <span className="text-[10px] font-normal text-slate-400">
+                      {t('harmonizer.fit_check')}
+                    </span>
+                  </div>
+                  {coveredPrograms.length > 0 ? (
+                    coveredPrograms.map((program) => (
+                      <ProgramFitCard
+                        key={program.program_id}
+                        program={program}
+                        covered
+                      />
+                    ))
+                  ) : (
+                    <p className="rounded-lg bg-slate-950/70 p-2 text-[11px] text-slate-400">
+                      {t('harmonizer.no_coverage')}
                     </p>
                   )}
-                </article>
-              ))}
-            </section>
-          )}
+                </div>
 
-          <section
-            aria-labelledby="subjects-heading"
-            className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4"
-          >
-            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-400" aria-hidden="true" />
-              <h3 id="subjects-heading" className="text-xs font-bold text-white">
-                推荐的 6 门 IB 选课矩阵
-              </h3>
-            </div>
-            <p className="rounded-lg border border-cyan-900/70 bg-cyan-950/30 p-2.5 text-[11px] leading-relaxed text-cyan-100">
-              根据 IB 官方规范，高中阶段必须同时修读两门语言（母语 + 二外），缺一将无法核发正式 IB 国际文凭。
-            </p>
-            {courseValidation && (
-              <div
-                className={`space-y-1 rounded-lg border p-2.5 text-[11px] ${
-                  courseValidation.language_requirements_met
-                    ? 'border-emerald-800 bg-emerald-950/30 text-emerald-200'
-                    : 'border-red-800 bg-red-950/40 text-red-200'
-                }`}
-                role={
-                  courseValidation.language_requirements_met
-                    ? 'status'
-                    : 'alert'
-                }
-              >
-                <p className="font-bold">
-                  {courseValidation.language_requirements_met
-                    ? '语言组完整性：符合要求'
-                    : '语言组完整性：未通过校验'}
-                </p>
-                <p>
-                  Group 1：{courseValidation.language_group_1_count ?? 0} 门；
-                  Group 2：{courseValidation.language_group_2_count ?? 0} 门
-                </p>
-                {courseValidation.group_4_science_count !== undefined && (
-                  <p>
-                    Group 4 理科：{courseValidation.group_4_science_count} 门
-                    {courseValidation.science_slot_limit_met === false &&
-                      '（超过建议槽位）'}
-                  </p>
+                {uncoveredPrograms.length > 0 && (
+                  <div className="space-y-1.5 border-t border-slate-800 pt-2">
+                    <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-amber-300">
+                      <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('harmonizer.uncovered', { count: uncoveredPrograms.length })}
+                    </h3>
+                    {uncoveredPrograms.map((program) => (
+                      <ProgramFitCard
+                        key={program.program_id}
+                        program={program}
+                        covered={false}
+                        onRemove={removeSelectedProgram}
+                        removing={isSyncingPrograms}
+                      />
+                    ))}
+                  </div>
                 )}
-              </div>
-            )}
+              </section>
 
-            {displaySubjects.length > 0 ? (
-              <div className="space-y-2">
-                {displaySubjects.map((subject, index) => {
-                  const groupNumber = Number(
-                    subject.group_number ?? subject.groupNumber,
-                  )
-                  const languageGroup =
-                    groupNumber === 1
-                      ? '第 1 组 · 母语研究'
-                      : groupNumber === 2
-                        ? '第 2 组 · 语言习得'
-                        : null
-                  const groupName =
-                    subject.group_name ?? subject.groupName ?? '学科组待确认'
-                  const name =
-                    subject.subject_name ??
-                    subject.subjectName ??
-                    subject.subject_code ??
-                    `推荐科目 ${index + 1}`
-                  const level = subject.level ?? '待确认'
-                  const targetGrade =
-                    subject.target_grade ?? subject.targetGrade ?? '待确认'
-                  const sources = normalizeList(
-                    subject.requested_by ?? subject.requestedBy,
-                  )
-
-                  return (
-                    <article
-                      key={
-                        subject.subject_code ??
-                        subject.subjectCode ??
-                        `${name}-${index}`
-                      }
-                      className="space-y-2 rounded-xl border border-slate-800 bg-slate-950 p-3"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <h4 className="text-xs font-bold text-indigo-200">
-                            {index + 1}. {name}
-                          </h4>
-                          <span className="mt-1 inline-block rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
-                            Group {Number.isFinite(groupNumber) ? groupNumber : '—'} · {groupName}
-                          </span>
-                          {languageGroup && (
-                            <span className="mt-1 inline-block rounded bg-cyan-950/70 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-200">
-                              {languageGroup}
-                            </span>
-                          )}
-                          {subject.is_mandatory && (
-                            <span className="mt-1 inline-block rounded bg-red-950/60 px-1.5 py-0.5 text-[10px] text-red-200">
-                              必修
-                            </span>
-                          )}
-                        </div>
-                        <span className="rounded-md border border-cyan-800 bg-cyan-950/60 px-2 py-1 text-[11px] font-bold text-cyan-200">
-                          {level} · 目标 {targetGrade}
-                        </span>
-                      </div>
-                      {sources.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {sources.map((source, sourceIndex) => (
-                            <span
-                              key={`${source}-${sourceIndex}`}
-                              className="rounded-md border border-slate-700 bg-slate-900 px-1.5 py-1 text-[10px] text-slate-300"
-                            >
-                              {source}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-[10px] text-slate-500">
-                          暂无提出要求的院校信息
-                        </p>
-                      )}
-                    </article>
-                  )
-                })}
-                {displaySubjects.length !== 6 && (
+              <section className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 className="flex items-center gap-1.5 text-xs font-bold text-white">
+                      <GraduationCap
+                        className="h-4 w-4 text-indigo-400"
+                        aria-hidden="true"
+                      />
+                      {t('harmonizer.subjects', { name: currentScenario.name })}
+                    </h3>
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      {currentScenario.strategy_tag}
+                    </p>
+                    {requiresExternalLanguageStudy(currentScenario) ? (
+                      <p className="mt-1.5 rounded-lg border border-amber-800 bg-amber-950/40 px-2 py-1 text-[10px] leading-relaxed text-amber-100">
+                        <strong>{t('harmonizer.ext_lang_required')}</strong>
+                        {' · '}
+                        {t('harmonizer.ext_lang_required_desc')}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-[10px] text-emerald-300/90">
+                        {t('harmonizer.ext_lang_not_required')}
+                      </p>
+                    )}
+                  </div>
+                  {coveredPrograms.length > 0 &&
+                    currentScenario.target_ib_score > 0 && (
+                      <span className="rounded-full border border-indigo-800 bg-indigo-950 px-2 py-0.5 text-[10px] font-bold text-indigo-300">
+                        {t('harmonizer.predicted_floor', { score: currentScenario.target_ib_score })}
+                      </span>
+                    )}
+                </div>
+                {coveredPrograms.length === 0 && (
                   <p className="text-[11px] text-amber-300">
-                    当前可展示 {displaySubjects.length} 门科目；完整六科组合请结合学校 IB 课程设置确认。
+                    {currentScenario.strictest_program}
                   </p>
                 )}
-              </div>
-            ) : (
-              <p className="text-xs text-slate-400">
-                接口暂未返回选课矩阵，请重试或检查志愿专业的要求数据。
-              </p>
-            )}
-          </section>
 
-          <section
-            aria-labelledby="guides-heading"
-            className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4"
-          >
-            <div className="flex items-center gap-2">
-              <BookOpenCheck className="h-4 w-4 text-cyan-400" aria-hidden="true" />
-              <h3 id="guides-heading" className="text-xs font-bold text-white">
-                单科保姆级提分指南
-              </h3>
-            </div>
-            <p className="text-[11px] leading-relaxed text-slate-400">
-              按统筹方案中的科目目标分开展复习。具体学习节奏请结合任课教师反馈调整。
-            </p>
-            {displaySubjects.length > 0 ? (
-              <div className="space-y-2">
-                {displaySubjects.map((subject, index) => {
-                  const guide = getSubjectGuide(subject)
-                  const code =
-                    subject.subject_code ?? subject.subjectCode ?? `subject-${index}`
-                  const grade =
-                    subject.target_grade ?? subject.targetGrade ?? '待确认'
-
-                  return (
-                    <details
-                      key={`${code}-guide`}
-                      className="group rounded-xl border border-slate-800 bg-slate-950 p-3"
+                <div className="space-y-2">
+                  {subjects.map((subject) => (
+                    <article
+                      key={subject.subject_code}
+                      className="flex items-start justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs"
                     >
-                      <summary className="cursor-pointer list-none text-xs font-semibold text-cyan-200 marker:hidden">
-                        <span className="flex items-center justify-between gap-2">
-                          {guide.name} · 目标 {grade}
-                          <span className="text-slate-500 transition group-open:rotate-180">
-                            ⌄
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                            Group {subject.group_number}
+                            {subject.group_name ? ` · ${subject.group_name}` : ''}
                           </span>
-                        </span>
-                      </summary>
-                      <div className="mt-3 space-y-2 text-[11px] leading-relaxed">
-                        <p className="text-slate-300">{guide.role}</p>
-                        <p className="rounded-lg border border-amber-900/70 bg-amber-950/30 p-2 text-amber-200">
-                          <strong>常见失分点：</strong> {guide.pitfall}
-                        </p>
-                        <ul className="list-inside list-disc space-y-1 text-slate-400">
-                          {guide.actions.map((action) => (
-                            <li key={action}>{action}</li>
-                          ))}
-                        </ul>
+                          <span className="font-bold text-white">
+                            {subject.subject_name}
+                          </span>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                              subject.level === 'HL'
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-800 text-slate-300'
+                            }`}
+                          >
+                            {subject.level}
+                          </span>
+                        </div>
+                        {asList(subject.requested_by).length > 0 && (
+                          <p className="line-clamp-2 text-[10px] leading-relaxed text-slate-400">
+                            {t('harmonizer.requirements_source')} {subject.requested_by.join(' · ')}
+                          </p>
+                        )}
+                        {subject.advisory_notes && (
+                          <p className="mt-2 rounded-lg border border-indigo-800/50 bg-indigo-950/40 p-2 text-[10px] leading-relaxed text-indigo-200">
+                            {subject.advisory_notes}
+                          </p>
+                        )}
                       </div>
-                    </details>
-                  )
-                })}
+                      <div className="shrink-0 text-right">
+                        <p className="text-xs font-bold text-amber-300">
+                          {t('harmonizer.target_grade', { grade: subject.target_grade })}
+                        </p>
+                        <p className="text-[9px] text-slate-500">{t('harmonizer.advisory_target')}</p>
+                      </div>
+                    </article>
+                  ))}
+                  {subjects.length !== 6 && (
+                    <p className="text-[11px] text-amber-300">
+                      {t('harmonizer.subject_count_warning', { count: subjects.length })}
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-2 rounded-2xl border border-indigo-900/50 bg-gradient-to-r from-indigo-950/40 via-slate-900 to-cyan-950/30 p-3.5">
+                <h3 className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
+                  <Target className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
+                  {t('harmonizer.strategy')}
+                </h3>
+                <p className="whitespace-pre-line text-[11px] leading-relaxed text-slate-300">
+                  {currentScenario.strategic_summary}
+                </p>
+                <p className="flex items-center gap-2 border-t border-slate-800/80 pt-2 text-[10px] text-slate-400">
+                  <SlidersHorizontal
+                    className="h-3 w-3"
+                    aria-hidden="true"
+                  />
+                  {t('harmonizer.workload')}
+                  <strong
+                    className={getWorkloadClass(
+                      currentScenario.workload_level,
+                    )}
+                  >
+                    {getWorkloadLabel(currentScenario.workload_level, t)}
+                  </strong>
+                  · {t('harmonizer.hl_count', { count: currentScenario.hl_count })}
+                </p>
+              </section>
+
+              <SoftEmailCaptureCard
+                scenarios={harmonizeData?.scenarios ?? null}
+                activeScenarioId={currentScenario?.scenario_id ?? null}
+              />
+
+              {applyError && (
+                <p role="alert" className="text-xs text-red-300">
+                  {applyError}
+                </p>
+              )}
+              <div className="fixed inset-x-0 bottom-[58px] z-30 mx-auto flex max-w-md gap-2 border-t border-slate-800 bg-slate-950/95 p-3 backdrop-blur">
+                <button
+                  type="button"
+                  onClick={saveCurrentScenario}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white transition hover:bg-indigo-500 active:scale-95"
+                >
+                  <Save className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t(isCurrentScenarioSaved ? 'harmonizer.saved_plan' : 'harmonizer.save_plan')}
+                </button>
+                <button
+                  type="button"
+                  onClick={exportScenario}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800 active:scale-95"
+                >
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t('harmonizer.export')}
+                </button>
               </div>
-            ) : (
-              <p className="text-xs text-slate-400">
-                暂无科目矩阵，暂时无法生成对应的提分指南。
-              </p>
-            )}
-          </section>
+              <div className="sr-only" aria-live="polite">
+                {t('harmonizer.current_scenario', { name: currentScenario.name })}
+              </div>
+              <ScenarioPrintCard
+                scenario={currentScenario}
+                selectedProgramIds={selectedProgramIds}
+                t={t}
+                language={i18n.language}
+              />
+            </>
+          )}
         </>
       )}
     </section>

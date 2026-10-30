@@ -7,6 +7,7 @@ import {
   Sparkles,
   Trophy,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { usePlan } from '../context/PlanContext.jsx'
 
 const competitionStages = [
@@ -70,29 +71,32 @@ const casIdeas = [
 ]
 
 export default function ExtraView() {
+  const { t } = useTranslation()
+  const copy = (text, options) =>
+    t(`extra.copy.${text}`, { defaultValue: text, ...options })
   const { selectedProgramIds } = usePlan()
 
   return (
     <section className="space-y-4 pb-24" aria-labelledby="extra-heading">
       <div>
         <p className="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-          课外成长与项目实践
+          {t('extra.section')}
         </p>
         <h2 id="extra-heading" className="mt-1 text-lg font-bold text-white">
-          竞赛阶梯与 CAS 规划
+          {t('extra.title')}
         </h2>
         <p className="mt-1 text-xs leading-relaxed text-slate-400">
-          目前志愿车有 {selectedProgramIds.length} 个目标专业。以下建议是可选方向，请以兴趣、时间和资源为先。
+          {t('extra.program_count', { count: selectedProgramIds.length })}
         </p>
       </div>
 
       <article className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
         <div className="flex items-center gap-2">
           <Trophy className="h-4 w-4 text-amber-400" aria-hidden="true" />
-          <h3 className="text-sm font-bold text-white">循序渐进的竞赛阶梯</h3>
+          <h3 className="text-sm font-bold text-white">{t('extra.contest_title')}</h3>
         </div>
         <p className="text-[11px] leading-relaxed text-slate-400">
-          竞赛成绩并非所有专业或大学的必要条件。选择与兴趣相关的活动，合理安排学业和休息。
+          {t('extra.contest_note')}
         </p>
         <div className="space-y-2.5">
           {competitionStages.map((stage) => (
@@ -101,14 +105,14 @@ export default function ExtraView() {
               className={`space-y-2 rounded-xl border p-3 ${stage.color}`}
             >
               <div className="flex items-center justify-between gap-2">
-                <h4 className="text-xs font-bold">{stage.stage}</h4>
+                <h4 className="text-xs font-bold">{copy(stage.stage)}</h4>
                 <span className="rounded bg-slate-950/60 px-2 py-0.5 text-[10px]">
                   {stage.years}
                 </span>
               </div>
               <ul className="list-inside list-disc space-y-1 text-[11px] leading-relaxed text-slate-300">
                 {stage.ideas.map((idea) => (
-                  <li key={idea}>{idea}</li>
+                  <li key={idea}>{copy(idea)}</li>
                 ))}
               </ul>
             </section>
@@ -119,10 +123,10 @@ export default function ExtraView() {
       <article className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-pink-400" aria-hidden="true" />
-          <h3 className="text-sm font-bold text-white">CAS 项目灵感</h3>
+          <h3 className="text-sm font-bold text-white">{t('extra.cas_title')}</h3>
         </div>
         <p className="text-[11px] leading-relaxed text-slate-400">
-          CAS 重视持续投入、体验与反思。开始项目前请与 CAS 协调员确认学校要求、风险评估和证据记录方式。
+          {t('extra.cas_note')}
         </p>
         <div className="space-y-2">
           {casIdeas.map(({ strand, icon: Icon, color, title, detail }) => (
@@ -132,10 +136,10 @@ export default function ExtraView() {
             >
               <h4 className="flex items-center gap-1.5 text-xs font-bold">
                 <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                {strand}
+                {copy(strand)}
               </h4>
-              <p className="mt-1 text-[11px] font-semibold text-slate-200">{title}</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{detail}</p>
+              <p className="mt-1 text-[11px] font-semibold text-slate-200">{copy(title)}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{copy(detail)}</p>
             </article>
           ))}
         </div>
@@ -144,13 +148,13 @@ export default function ExtraView() {
       <div className="flex items-start gap-2 rounded-xl border border-indigo-800/60 bg-indigo-950/30 p-3 text-[11px] leading-relaxed text-indigo-100">
         <Code2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-300" aria-hidden="true" />
         <p>
-          活动记录可包含目标、过程、反馈和反思。申请材料应准确描述个人贡献，避免夸大团队成果或使用未经核实的数据。
+          {t('extra.record_note')}
         </p>
       </div>
       <div className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-400">
         <Medal className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
         <p>
-          竞赛规则、报名时间和年龄资格每年可能变化，报名之前请查阅主办方公告。
+          {t('extra.official_note')}
         </p>
       </div>
     </section>

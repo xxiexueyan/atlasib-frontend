@@ -54,8 +54,9 @@ atlasib-frontend/src/
 ### 2.1 基础查询接口
 * **`GET /countries`**: 获取支持 IB 申请的国家列表。
 * **`GET /programs`**: 获取专业列表。
-  - Query: `country_id` (可选), `faculty` (可选), `search` (可选)。
-  - 返回字段必须正确映射：`id`, `university_name`, `program_name`, `country_name`, `min_predicted`, `est_annual_rmb`, `coop_available`。
+  - Query: `country_id` (可选), `faculty` (可选), `search` (可选), `offset` / `limit` (分页)。
+  - 返回字段必须正确映射：`program_id`, `university_name`, `program_name`, `country_id`, `country_name`, `min_predicted`, `tuition_local_per_year`, `living_cost_per_year`, `est_total_rmb_per_year`, `coop_available`。
+  - 学费显示仅使用 `tuition_local_per_year` 的原币金额，并按国家货币标识展示，不合并生活费；`est_total_rmb_per_year` 仅作人民币估算数据，不用于原币学费展示。
 
 ### 2.2 智能问卷推导
 * **`POST /diagnose`**:

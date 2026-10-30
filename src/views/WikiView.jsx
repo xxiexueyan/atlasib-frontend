@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   BookMarked,
   BriefcaseBusiness,
@@ -145,19 +146,21 @@ const countryPolicies = [
 ]
 
 export default function WikiView() {
+  const { t } = useTranslation()
+  const copy = (text) => t(`wiki.copy.${text}`, { defaultValue: text })
   const [section, setSection] = useState('ib')
 
   return (
     <section className="space-y-4 pb-24" aria-labelledby="wiki-heading">
       <div>
         <p className="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-          IB 课程与留学路径
+          {copy('IB 课程与留学路径')}
         </p>
         <h2 id="wiki-heading" className="mt-1 text-lg font-bold text-white">
-          留学政策与 IB 科普
+          {copy('留学政策与 IB 科普')}
         </h2>
         <p className="mt-1 text-xs leading-relaxed text-slate-400">
-          用简明信息了解课程和常见毕业后路径；具体政策请以官方最新说明为准。
+          {copy('用简明信息了解课程和常见毕业后路径；具体政策请以官方最新说明为准。')}
         </p>
       </div>
 
@@ -173,7 +176,7 @@ export default function WikiView() {
           }`}
         >
           <BookMarked className="h-4 w-4" aria-hidden="true" />
-          IB 课程体系
+          {copy('IB 课程体系')}
         </button>
         <button
           type="button"
@@ -186,7 +189,7 @@ export default function WikiView() {
           }`}
         >
           <Globe2 className="h-4 w-4" aria-hidden="true" />
-          国家与工作路径
+          {copy('国家与工作路径')}
         </button>
       </div>
 
@@ -196,14 +199,14 @@ export default function WikiView() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-1.5 text-sm font-bold text-white">
                 <Layers3 className="h-4 w-4 text-amber-400" aria-hidden="true" />
-                IB 45 分制怎么构成？
+                {copy('IB 45 分制怎么构成？')}
               </h3>
               <span className="rounded-full border border-cyan-800 bg-cyan-950/60 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
-                42 学科分 + 最多 3 核心加分
+                {copy('42 学科分 + 最多 3 核心加分')}
               </span>
             </div>
             <p className="text-xs leading-relaxed text-slate-300">
-              IB Diploma Programme 通常由 6 门学科组成，每科最高 7 分，学科总分最高 42 分；TOK 与 EE 的成绩组合最多可贡献 3 分。CAS 不计入 45 分，但属于必须完成的核心要求。
+              {copy('IB Diploma Programme 通常由 6 门学科组成，每科最高 7 分，学科总分最高 42 分；TOK 与 EE 的成绩组合最多可贡献 3 分。CAS 不计入 45 分，但属于必须完成的核心要求。')}
             </p>
             <div className="space-y-2">
               {scoreBands.map((band) => (
@@ -212,11 +215,11 @@ export default function WikiView() {
                   className={`rounded-xl border p-2.5 ${band.color}`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-1">
-                    <span className="text-xs font-bold">{band.score}</span>
-                    <span className="text-[10px]">{band.label}</span>
+                    <span className="text-xs font-bold">{copy(band.score)}</span>
+                      <span className="text-[10px]">{copy(band.label)}</span>
                   </div>
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
-                    {band.detail}
+                    {copy(band.detail)}
                   </p>
                 </div>
               ))}
@@ -226,7 +229,7 @@ export default function WikiView() {
           <article className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-cyan-400" aria-hidden="true" />
-              <h3 className="text-sm font-bold text-white">TOK、EE 与 CAS</h3>
+              <h3 className="text-sm font-bold text-white">{copy('TOK、EE 与 CAS')}</h3>
             </div>
             <div className="space-y-2">
               {coreElements.map((item) => (
@@ -235,10 +238,10 @@ export default function WikiView() {
                   className="rounded-xl border border-slate-800 bg-slate-950 p-3"
                 >
                   <h4 className="text-xs font-bold text-indigo-300">
-                    {item.code} · {item.name}
+                    {item.code} · {copy(item.name)}
                   </h4>
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-                    {item.detail}
+                    {copy(item.detail)}
                   </p>
                 </div>
               ))}
@@ -248,7 +251,7 @@ export default function WikiView() {
           <article className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
             <div className="flex items-center gap-2">
               <Layers3 className="h-4 w-4 text-purple-400" aria-hidden="true" />
-              <h3 className="text-sm font-bold text-white">六大学科组</h3>
+              <h3 className="text-sm font-bold text-white">{copy('六大学科组')}</h3>
             </div>
             <div className="space-y-2">
               {subjectGroups.map(([group, description]) => (
@@ -256,9 +259,9 @@ export default function WikiView() {
                   key={group}
                   className="rounded-xl border border-slate-800 bg-slate-950 p-2.5"
                 >
-                  <h4 className="text-xs font-semibold text-purple-200">{group}</h4>
+                  <h4 className="text-xs font-semibold text-purple-200">{copy(group)}</h4>
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
-                    {description}
+                    {copy(description)}
                   </p>
                 </div>
               ))}
@@ -270,7 +273,7 @@ export default function WikiView() {
           <div className="flex gap-2 rounded-xl border border-amber-800/70 bg-amber-950/30 p-3 text-[11px] leading-relaxed text-amber-100">
             <CircleHelp className="h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
             <p>
-              毕业工签和永居资格受个人条件及政策调整影响。以下为常见路径概览，不构成法律或移民建议；请在申请前查看政府官网。
+              {copy('毕业工签和永居资格受个人条件及政策调整影响。以下为常见路径概览，不构成法律或移民建议；请在申请前查看政府官网。')}
             </p>
           </div>
           {countryPolicies.map((policy) => (
@@ -283,10 +286,10 @@ export default function WikiView() {
                   <span className="text-lg" aria-hidden="true">{policy.flag}</span>
                   <span className="min-w-0">
                     <span className="block text-sm font-bold text-white">
-                      {policy.country}
+                      {copy(policy.country)}
                     </span>
                     <span className="mt-0.5 block text-[11px] text-cyan-300">
-                      {policy.visa}
+                      {copy(policy.visa)}
                     </span>
                   </span>
                 </span>
@@ -296,15 +299,15 @@ export default function WikiView() {
               </summary>
               <div className="space-y-2 border-t border-slate-800 px-3.5 pb-3.5 pt-3">
                 <p className="text-xs leading-relaxed text-slate-300">
-                  {policy.summary}
+                  {copy(policy.summary)}
                 </p>
                 <h4 className="flex items-center gap-1 text-[11px] font-bold text-emerald-300">
                   <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                  规划时留意
+                  {copy('规划时留意')}
                 </h4>
                 <ul className="list-inside list-disc space-y-1 text-[11px] leading-relaxed text-slate-400">
                   {policy.checklist.map((item) => (
-                    <li key={item}>{item}</li>
+                    <li key={item}>{copy(item)}</li>
                   ))}
                 </ul>
               </div>
@@ -313,7 +316,7 @@ export default function WikiView() {
           <div className="flex gap-2 rounded-xl border border-slate-800 bg-slate-900 p-3 text-[11px] leading-relaxed text-slate-400">
             <BriefcaseBusiness className="h-4 w-4 shrink-0 text-indigo-300" aria-hidden="true" />
             <p>
-              比较国家时，也要评估专业就业需求、语言要求、实习资源、生活成本和个人适应度，避免只依据单一签证期限做决定。
+              {copy('比较国家时，也要评估专业就业需求、语言要求、实习资源、生活成本和个人适应度，避免只依据单一签证期限做决定。')}
             </p>
           </div>
         </div>

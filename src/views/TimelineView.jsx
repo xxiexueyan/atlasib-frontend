@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { usePlan } from '../context/PlanContext.jsx'
 
 const milestones = [
@@ -34,19 +35,21 @@ const milestones = [
 ]
 
 export default function TimelineView() {
+  const { t } = useTranslation()
+  const copy = (text) => t(`timeline.copy.${text}`, { defaultValue: text })
   const { selectedProgramIds } = usePlan()
 
   return (
     <section className="space-y-4 pb-24" aria-labelledby="timeline-heading">
       <div>
         <p className="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-          四年成长路线
+          {t('timeline.section')}
         </p>
         <h2 id="timeline-heading" className="mt-1 text-lg font-bold text-white">
-          G9–G12 关键里程碑
+          {t('timeline.title')}
         </h2>
         <p className="mt-1 text-xs leading-relaxed text-slate-400">
-          当前基于 {selectedProgramIds.length} 个志愿提供通用规划框架；请结合学校校历、申请国家和个人情况调整。
+          {t('timeline.program_count', { count: selectedProgramIds.length })}
         </p>
       </div>
 
@@ -61,11 +64,11 @@ export default function TimelineView() {
               aria-hidden="true"
             />
             <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              阶段 {index + 1}
+              {t('timeline.stage', { number: index + 1 })}
             </span>
-            <h3 className="mt-0.5 text-sm font-bold text-white">{milestone.period}</h3>
+            <h3 className="mt-0.5 text-sm font-bold text-white">{copy(milestone.period)}</h3>
             <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
-              {milestone.description}
+              {copy(milestone.description)}
             </p>
             <ul className="mt-3 space-y-2">
               {milestone.actions.map((action) => (
@@ -74,7 +77,7 @@ export default function TimelineView() {
                   className="flex gap-2 text-[11px] leading-relaxed text-slate-300"
                 >
                   <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-cyan-400" aria-hidden="true" />
-                  {action}
+                  {copy(action)}
                 </li>
               ))}
             </ul>
@@ -83,7 +86,7 @@ export default function TimelineView() {
       </div>
 
       <aside className="rounded-xl border border-cyan-900/70 bg-cyan-950/30 p-3 text-[11px] leading-relaxed text-cyan-100">
-        时间线仅为规划提示，不替代学校的 IB 课程安排或大学官网的申请日期。每学期复核一次，必要时调整目标和节奏。
+        {t('timeline.note')}
       </aside>
     </section>
   )

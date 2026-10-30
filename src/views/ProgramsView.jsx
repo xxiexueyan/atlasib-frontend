@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   Check,
   CircleAlert,
@@ -11,7 +12,13 @@ import {
   SlidersHorizontal,
   Wallet,
 } from 'lucide-react'
-import { getPrograms } from '../api/dictionary.js'
+import {
+  buildHarmonizerPayload,
+  calculateMultiScenario,
+} from '../api/harmonizer.js'
+import { getPrograms, mergeProgramDetails } from '../api/dictionary.js'
+import { getMandatorySubjectsForProgram } from '../api/harmonizerData.js'
+import { formatLocalAnnualTuition } from '../api/programCost.js'
 import { userProgramApi } from '../api/userPrograms.js'
 import { usePlan } from '../context/PlanContext.jsx'
 
@@ -22,13 +29,13 @@ const viewModes = [
   { id: 'catalog', label: '全部专业' },
 ]
 
-function getProgramList(response) {
+function getProgramList(response, t) {
   const programs = Array.isArray(response)
     ? response
     : response?.items ?? response?.programs
 
   if (!Array.isArray(programs)) {
-    throw new TypeError('专业接口返回的数据格式无效：预期为专业列表。')
+    throw new TypeError(t('errors.invalid_program_response'))
   }
 
   return programs
@@ -38,24 +45,34 @@ function getProgramId(program) {
   return program.program_id ?? program.programId ?? program.id
 }
 
-function getProgramName(program) {
-  return (
-    program.name_cn ??
-    program.program_name_zh ??
-    program.program_name ??
-    program.programName ??
-    program.name_en ??
-    getProgramId(program) ??
-    '专业名称待补充'
-  )
+function getProgramName(program, t, language) {
+  const names =
+    language === 'zh'
+      ? [
+          program.name_cn,
+          program.program_name_zh,
+          program.program_name,
+          program.programName,
+          program.name_en,
+        ]
+      : [
+          program.name_en,
+          program.program_name,
+          program.programName,
+          program.name_cn,
+          program.program_name_zh,
+        ]
+  return names.find(Boolean) ?? getProgramId(program) ?? t('programs.program_name_missing')
 }
 
-function getUniversityName(program) {
+function getUniversityName(program, t, language) {
   return (
-    program.university_name ??
+    (language === 'zh'
+      ? program.university_name_zh ?? program.university_name
+      : program.university_name_en ?? program.university_name) ??
     program.universityName ??
     program.uniName ??
-    '院校信息待补充'
+    t('programs.university_missing')
   )
 }
 
@@ -68,11 +85,42 @@ function getCountryId(program) {
   )
 }
 
-function getCountryName(program) {
-  return program.country_name ?? program.countryName ?? program.country ?? '其他国家'
+function getCountryName(program, t) {
+  return (
+    program.country_name ??
+    program.countryName ??
+    program.country ??
+    t('programs.country_other')
+  )
 }
 
-function getMandatorySubjects(program) {
+function splitIntoChunks(items, chunkSize) {
+  const chunks = []
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize))
+  }
+  return chunks
+}
+
+function mergeHarmonizerScenarios(responses) {
+  const scenarios = new Map()
+  for (const response of responses) {
+    for (const scenario of response?.scenarios ?? []) {
+      const existing = scenarios.get(scenario.scenario_id)
+      if (existing) {
+        existing.subjects.push(...(scenario.subjects ?? []))
+      } else {
+        scenarios.set(scenario.scenario_id, {
+          ...scenario,
+          subjects: [...(scenario.subjects ?? [])],
+        })
+      }
+    }
+  }
+  return { scenarios: [...scenarios.values()] }
+}
+
+function getMandatorySubjects(program, harmonizeData) {
   const subjects =
     program.mandatory_courses ??
     program.mandatoryCourses ??
@@ -82,22 +130,25 @@ function getMandatorySubjects(program) {
     program.admissionReqs?.mandatoryCourses ??
     []
 
-  if (!Array.isArray(subjects)) return []
-
-  return subjects
-    .map((subject) => {
-      if (typeof subject === 'string') return subject
-      return (
-        subject?.label ??
-        subject?.subject_name ??
-        subject?.subjectName ??
-        subject?.code
-      )
-    })
-    .filter(Boolean)
+  const savedSubjects = Array.isArray(subjects)
+    ? subjects
+        .map((subject) => {
+          if (typeof subject === 'string') return subject
+          return (
+            subject?.label ??
+            subject?.subject_name ??
+            subject?.subjectName ??
+            subject?.code
+          )
+        })
+        .filter(Boolean)
+    : []
+  return savedSubjects.length > 0
+    ? savedSubjects
+    : getMandatorySubjectsForProgram(program, harmonizeData)
 }
 
-function getPredictedRequirement(program) {
+function getPredictedRequirement(program, t) {
   const admissions = program.admission_requirements ?? program.admissionReqs
   const text =
     program.predicted_text ??
@@ -115,21 +166,14 @@ function getPredictedRequirement(program) {
 
   if (text) return text
   if (score !== undefined && score !== null && score !== '') {
-    return `${recommended ? '建议' : '最低'}预估分 ${score}+`
+    return t(recommended ? 'programs.recommended_score' : 'programs.minimum_score', {
+      score,
+    })
   }
-  return '暂无门槛数据'
+  return t('programs.no_score')
 }
 
-function formatAnnualCost(value) {
-  if (value === undefined || value === null || value === '') return '暂无开销数据'
-  if (typeof value === 'number') return `约 ¥${value.toLocaleString('zh-CN')} / 年`
-  if (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value.trim())) {
-    return `约 ¥${Number(value).toLocaleString('zh-CN')} / 年`
-  }
-  return value
-}
-
-function getWorkPermitOverview(program) {
+function getWorkPermitOverview(program, t) {
   const overview =
     program.visa_work ??
     program.visaWork ??
@@ -138,19 +182,19 @@ function getWorkPermitOverview(program) {
 
   if (overview) return overview
   if (program.coop_available === true || program.coopAvailable === true) {
-    return '提供 Co-op 带薪实习；毕业工签政策请以目的地官方规定为准。'
+    return t('programs.coop')
   }
   if (program.coop_available === false || program.coopAvailable === false) {
-    return '暂无 Co-op；毕业工签政策请以目的地官方规定为准。'
+    return t('programs.no_coop')
   }
-  return '暂无工签数据，请以院校及目的地官方政策为准。'
+  return t('programs.no_visa_data')
 }
 
-function matchesFilters(program, search, countryId) {
+function matchesFilters(program, search, countryId, t, language) {
   const query = search.trim().toLocaleLowerCase()
   const matchesSearch =
     !query ||
-    `${getProgramName(program)} ${getUniversityName(program)} ${getCountryName(program)}`
+    `${getProgramName(program, t, language)} ${getUniversityName(program, t, language)} ${getCountryName(program, t)}`
       .toLocaleLowerCase()
       .includes(query)
   const itemCountry = getCountryId(program)
@@ -164,12 +208,17 @@ function matchesFilters(program, search, countryId) {
 
 function ProgramCard({
   program,
+  harmonizeData,
+  mandatorySubjectsLoading,
+  mandatorySubjectsError,
+  mandatorySubjectsNeedsDiagnosis,
   selected,
   disabled,
   onToggle,
   removable = true,
 }) {
-  const subjects = getMandatorySubjects(program)
+  const { t, i18n } = useTranslation()
+  const subjects = getMandatorySubjects(program, harmonizeData)
   const programId = getProgramId(program)
 
   return (
@@ -183,12 +232,12 @@ function ProgramCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="text-sm font-bold text-white">{getProgramName(program)}</h3>
+            <h3 className="text-sm font-bold text-white">{getProgramName(program, t, i18n.language)}</h3>
             <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
-              {program.flag_emoji ?? program.flagEmoji ?? ''} {getCountryName(program)}
+              {program.flag_emoji ?? program.flagEmoji ?? ''} {getCountryName(program, t)}
             </span>
           </div>
-          <p className="mt-1 text-xs text-indigo-300">{getUniversityName(program)}</p>
+          <p className="mt-1 text-xs text-indigo-300">{getUniversityName(program, t, i18n.language)}</p>
         </div>
 
         {removable && programId && (
@@ -197,7 +246,7 @@ function ProgramCard({
             onClick={() => onToggle(programId)}
             disabled={disabled}
             aria-pressed={selected}
-            aria-label={`${selected ? '移出' : '加入'}志愿车：${getProgramName(program)}`}
+            aria-label={`${t(selected ? 'programs.remove_from_cart' : 'programs.add')}: ${getProgramName(program, t, i18n.language)}`}
             className={`flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
               selected
                 ? 'bg-indigo-600 text-white'
@@ -207,12 +256,12 @@ function ProgramCard({
             {selected ? (
               <>
                 <Check className="h-3 w-3" aria-hidden="true" />
-                已选择
+                {t('programs.selected_badge')}
               </>
             ) : (
               <>
                 <Plus className="h-3 w-3" aria-hidden="true" />
-                加入
+                {t('programs.unselected_badge')}
               </>
             )}
           </button>
@@ -221,11 +270,11 @@ function ProgramCard({
 
       <div className="space-y-2 rounded-xl bg-slate-950/80 p-2.5 text-[11px] text-slate-300">
         <p>
-          <strong className="text-slate-200">门槛预估分：</strong>
-          <span className="text-emerald-300">{getPredictedRequirement(program)}</span>
+          <strong className="text-slate-200">{t('common.min_predicted')}</strong>
+          <span className="text-emerald-300">{getPredictedRequirement(program, t)}</span>
         </p>
         <div>
-          <strong className="text-slate-200">必修科目：</strong>
+          <strong className="text-slate-200">{t('programs.subjects')}</strong>
           {subjects.length > 0 ? (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {subjects.map((subject, index) => (
@@ -238,20 +287,22 @@ function ProgramCard({
               ))}
             </div>
           ) : (
-            <span className="text-slate-500"> 暂无数据</span>
+            <span className="text-slate-500">
+              {mandatorySubjectsLoading
+                ? ` ${t('programs.checking')}`
+                : mandatorySubjectsError
+                  ? ` ${t('programs.subjects_unavailable')}`
+                  : mandatorySubjectsNeedsDiagnosis
+                    ? ` ${t('programs.finish_diagnosis')}`
+                  : ` ${t('programs.no_subjects')}`}
+            </span>
           )}
         </div>
         <div className="flex items-start gap-1.5">
           <Wallet className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden="true" />
           <p>
-            <strong className="text-slate-200">折合年开销：</strong>
-            {formatAnnualCost(
-              program.est_annual_rmb ??
-                program.est_total_rmb_per_year ??
-                program.est_total_rmb ??
-                program.totalAnnualRmb ??
-                program.annual_cost_rmb,
-            )}
+            <strong className="text-slate-200">{t('common.tuition')}</strong>
+            {formatLocalAnnualTuition(program, t, i18n.language)}
           </p>
         </div>
         <div className="flex items-start gap-1.5">
@@ -260,13 +311,13 @@ function ProgramCard({
             aria-hidden="true"
           />
           <p>
-            <strong className="text-slate-200">工签 / 实习：</strong>
-            {getWorkPermitOverview(program)}
+            <strong className="text-slate-200">{t('programs.work_permit')}</strong>
+            {getWorkPermitOverview(program, t)}
           </p>
         </div>
         {Array.isArray(program.fit_reasons) && program.fit_reasons.length > 0 && (
           <p className="border-t border-slate-800 pt-2 text-slate-400">
-            推荐理由：{program.fit_reasons[0]}
+            {t('programs.fit_reason')} {program.fit_reasons[0]}
           </p>
         )}
       </div>
@@ -275,6 +326,7 @@ function ProgramCard({
 }
 
 export default function ProgramsView() {
+  const { t, i18n } = useTranslation()
   const [search, setSearch] = useState('')
   const [countryId, setCountryId] = useState(allCountries)
   const [viewMode, setViewMode] = useState('selected')
@@ -286,6 +338,7 @@ export default function ProgramsView() {
     isLoadingSavedPrograms,
     currentProfileId,
     diagnosisResult,
+    wizardAnswers,
   } = usePlan()
   const queryClient = useQueryClient()
 
@@ -295,12 +348,49 @@ export default function ProgramsView() {
 
   const catalogQuery = useQuery({
     queryKey: ['programs', params],
-    queryFn: async () => getProgramList(await getPrograms(params)),
+    queryFn: async () => getProgramList(await getPrograms(params), t),
   })
 
   const countriesQuery = useQuery({
-    queryKey: ['programs', 'country-options'],
-    queryFn: async () => getProgramList(await getPrograms()),
+    queryKey: ['programs', 'complete-catalog'],
+    queryFn: async () => {
+      const programs = []
+      const pageSize = 100
+      let offset = 0
+      let total = Number.POSITIVE_INFINITY
+
+      while (offset < total) {
+        const response = await getPrograms({ limit: pageSize, offset })
+        const page = getProgramList(response, t)
+        programs.push(...page)
+        total = Array.isArray(response)
+          ? programs.length
+          : response?.total ?? programs.length
+        if (page.length < pageSize) break
+        offset += page.length
+      }
+
+      return programs
+    },
+  })
+
+  const canCheckMandatorySubjects =
+    selectedProgramIds.length > 0 &&
+    selectedProgramIds.length <= 50 &&
+    (Boolean(currentProfileId) ||
+      (Boolean(wizardAnswers.primaryLanguageConfirmed) &&
+        Boolean(wizardAnswers.secondaryLanguageConfirmed)))
+  const harmonizeQuery = useQuery({
+    queryKey: ['harmonize_multi', selectedProgramIds, currentProfileId],
+    queryFn: () =>
+      calculateMultiScenario(
+        buildHarmonizerPayload(selectedProgramIds, {
+          profileId: currentProfileId,
+          answers: wizardAnswers,
+        }),
+      ),
+    enabled: canCheckMandatorySubjects,
+    retry: false,
   })
 
   const selectedQuery = useQuery({
@@ -315,19 +405,22 @@ export default function ProgramsView() {
 
     for (const program of programs) {
       const id = getCountryId(program)
-      const name = getCountryName(program)
+      const name = getCountryName(program, t)
       if (id !== undefined && id !== null && !uniqueCountries.has(String(id))) {
         uniqueCountries.set(String(id), name)
       }
     }
 
     return [...uniqueCountries].map(([id, name]) => ({ id, name }))
-  }, [countriesQuery.data, catalogQuery.data])
+  }, [countriesQuery.data, catalogQuery.data, t])
 
-  const recommendedPrograms =
+  const recommendationResult =
     diagnosisResult?.recommended_programs ??
     diagnosisResult?.recommendedPrograms ??
     []
+  const recommendedPrograms = Array.isArray(recommendationResult)
+    ? recommendationResult
+    : []
   const allCatalogPrograms =
     countriesQuery.data ?? catalogQuery.data ?? []
   const selectedDetails = selectedQuery.data ?? []
@@ -339,26 +432,82 @@ export default function ProgramsView() {
   )
   const recommendedById = new Map(
     (Array.isArray(recommendedPrograms) ? recommendedPrograms : []).map(
-      (program) => [getProgramId(program), program],
+      (program) => {
+        const programId = getProgramId(program)
+        return [
+          programId,
+          mergeProgramDetails(program, catalogById.get(programId)),
+        ]
+      },
     ),
   )
 
-  const selectedPrograms = selectedProgramIds.map(
-    (id) =>
-      detailsById.get(id) ??
-      catalogById.get(id) ??
+  const selectedPrograms = selectedProgramIds.map((id) => {
+    const catalogProgram = catalogById.get(id)
+    const selectedDetail = detailsById.get(id)
+    if (catalogProgram) {
+      return mergeProgramDetails(selectedDetail ?? {}, catalogProgram)
+    }
+    return (
+      selectedDetail ??
       recommendedById.get(id) ?? {
         program_id: id,
         name_cn: id,
-        university_name: '专业详情暂不可用',
-      },
+        university_name: t('programs.details_unavailable'),
+      }
+    )
+  })
+  const enrichedRecommendations = recommendedPrograms.map((program) => {
+    const programId = getProgramId(program)
+    return mergeProgramDetails(program, catalogById.get(programId))
+  })
+  const recommendationProgramIds = [
+    ...new Set(
+      enrichedRecommendations
+        .map(getProgramId)
+        .filter((id) => typeof id === 'string' && id.trim()),
+    ),
+  ]
+  const additionalRecommendationIds = recommendationProgramIds.filter(
+    (id) => !selectedProgramIds.includes(id),
   )
+  const recommendationHarmonizerQuery = useQuery({
+    queryKey: [
+      'harmonize_recommended_programs',
+      recommendationProgramIds,
+      currentProfileId,
+    ],
+    queryFn: async () => {
+      const responses = await Promise.all(
+        splitIntoChunks(additionalRecommendationIds, 50).map((programIds) =>
+          calculateMultiScenario(
+            buildHarmonizerPayload(programIds, {
+              profileId: currentProfileId,
+              answers: wizardAnswers,
+            }),
+          ),
+        ),
+      )
+      return mergeHarmonizerScenarios(responses)
+    },
+    enabled:
+      viewMode === 'recommended' &&
+      additionalRecommendationIds.length > 0 &&
+      (Boolean(currentProfileId) ||
+        (Boolean(wizardAnswers.primaryLanguageConfirmed) &&
+          Boolean(wizardAnswers.secondaryLanguageConfirmed))),
+    retry: false,
+  })
+  const recommendationHarmonizeData = mergeHarmonizerScenarios([
+    harmonizeQuery.data ?? {},
+    recommendationHarmonizerQuery.data ?? {},
+  ])
   const filteredCatalog = (catalogQuery.data ?? []).filter((program) =>
-    matchesFilters(program, search, countryId),
+    matchesFilters(program, search, countryId, t, i18n.language),
   )
-  const filteredRecommendations = (
-    Array.isArray(recommendedPrograms) ? recommendedPrograms : []
-  ).filter((program) => matchesFilters(program, search, countryId))
+  const filteredRecommendations = enrichedRecommendations.filter((program) =>
+    matchesFilters(program, search, countryId, t, i18n.language),
+  )
   const visiblePrograms =
     viewMode === 'selected'
       ? selectedPrograms
@@ -367,6 +516,12 @@ export default function ProgramsView() {
         : filteredCatalog
   const currentQuery =
     viewMode === 'selected' ? selectedQuery : catalogQuery
+  const mandatorySubjectsQuery =
+    viewMode === 'recommended' ? recommendationHarmonizerQuery : harmonizeQuery
+  const mandatorySubjectsData =
+    viewMode === 'recommended'
+      ? recommendationHarmonizeData
+      : harmonizeQuery.data
 
   async function handleToggleProgram(programId) {
     const result = await toggleProgram(programId)
@@ -382,17 +537,17 @@ export default function ProgramsView() {
       <div className="space-y-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-            志愿车与专业库
+            {t('programs.section')}
           </p>
           <h2 id="programs-heading" className="mt-1 text-lg font-bold text-white">
-            查看和管理目标专业
+            {t('programs.title')}
           </h2>
         </div>
 
         <div
           className="grid grid-cols-3 gap-1 rounded-xl border border-slate-800 bg-slate-900 p-1"
           role="tablist"
-          aria-label="专业列表类型"
+          aria-label={t('programs.list_type')}
         >
           {viewModes.map((mode) => (
             <button
@@ -407,7 +562,7 @@ export default function ProgramsView() {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {mode.label}
+              {t(`programs.${mode.id}`)}
               {mode.id === 'selected' && ` (${selectedProgramIds.length})`}
             </button>
           ))}
@@ -417,12 +572,12 @@ export default function ProgramsView() {
           <>
             <label className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 focus-within:border-indigo-500">
               <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-              <span className="sr-only">搜索大学或专业</span>
+              <span className="sr-only">{t('common.search')}</span>
               <input
                 type="search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜索大学或专业"
+                placeholder={t('common.search')}
                 className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
               />
             </label>
@@ -430,7 +585,7 @@ export default function ProgramsView() {
             <div
               className="flex gap-2 overflow-x-auto pb-1"
               role="group"
-              aria-label="按国家筛选"
+              aria-label={t('programs.country_filter')}
             >
               <button
                 type="button"
@@ -442,7 +597,7 @@ export default function ProgramsView() {
                     : 'border-slate-700 bg-slate-900 text-slate-400'
                 }`}
               >
-                全部国家
+                {t('common.all_countries')}
               </button>
               {countries.map((country) => (
                 <button
@@ -468,7 +623,7 @@ export default function ProgramsView() {
       (selectedQuery.isPending && viewMode === 'selected' && currentProfileId) ? (
         <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
           <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-          {viewMode === 'selected' ? '正在加载已选志愿…' : '正在加载专业列表…'}
+          {t(viewMode === 'selected' ? 'programs.loading_selected' : 'programs.loading_catalog')}
         </div>
       ) : null}
 
@@ -479,18 +634,18 @@ export default function ProgramsView() {
         >
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <div>
-            <p>{viewMode === 'selected' ? '已选志愿加载失败。' : '专业列表加载失败。'}</p>
+            <p>{t(viewMode === 'selected' ? 'programs.selected_error' : 'programs.catalog_error')}</p>
             <p className="mt-1 text-xs text-red-300">
               {currentQuery.error instanceof Error
                 ? currentQuery.error.message
-                : '请稍后重试。'}
+                : t('errors.request_failed')}
             </p>
             <button
               type="button"
               onClick={() => currentQuery.refetch()}
               className="mt-2 rounded-lg border border-red-700 px-2.5 py-1 text-xs transition hover:bg-red-900/50"
             >
-              重试
+              {t('common.retry')}
             </button>
           </div>
         </div>
@@ -501,16 +656,16 @@ export default function ProgramsView() {
         !currentProfileId && (
           <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-center">
             <GraduationCap className="mx-auto h-6 w-6 text-slate-500" aria-hidden="true" />
-            <p className="mt-2 text-sm font-semibold text-slate-300">暂无向导推荐专业</p>
+            <p className="mt-2 text-sm font-semibold text-slate-300">{t('programs.empty_title')}</p>
             <p className="mt-1 text-xs text-slate-500">
-              完成智能向导诊断后，推荐结果会显示在这里。
+              {t('programs.empty_body')}
             </p>
             <button
               type="button"
               onClick={() => setActiveTab('wizard')}
               className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500 active:scale-95"
             >
-              前往智能向导
+              {t('programs.go_wizard')}
             </button>
           </div>
         )}
@@ -519,7 +674,7 @@ export default function ProgramsView() {
         recommendedPrograms.length === 0 &&
         currentProfileId && (
           <p className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs text-slate-400">
-            该画像没有保存推荐专业快照，请重新完成向导诊断。
+            {t('programs.no_snapshot')}
           </p>
         )}
 
@@ -529,16 +684,16 @@ export default function ProgramsView() {
         selectedPrograms.length === 0 && (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-10 text-center">
             <ListChecks className="mx-auto h-7 w-7 text-slate-500" aria-hidden="true" />
-            <p className="mt-2 text-sm font-medium text-slate-300">志愿车还没有专业</p>
+            <p className="mt-2 text-sm font-medium text-slate-300">{t('programs.no_saved')}</p>
             <p className="mt-1 text-xs text-slate-500">
-              可以从向导推荐或全部专业中添加。
+              {t('programs.no_saved_hint')}
             </p>
             <button
               type="button"
               onClick={() => setViewMode(diagnosisResult ? 'recommended' : 'catalog')}
               className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500 active:scale-95"
             >
-              {diagnosisResult ? '查看向导推荐' : '浏览全部专业'}
+              {diagnosisResult ? t('programs.recommended') : t('programs.browse')}
             </button>
           </div>
         )}
@@ -550,8 +705,8 @@ export default function ProgramsView() {
         !catalogQuery.isError && (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-10 text-center">
             <GraduationCap className="mx-auto h-7 w-7 text-slate-500" aria-hidden="true" />
-            <p className="mt-2 text-sm font-medium text-slate-300">没有找到匹配的专业</p>
-            <p className="mt-1 text-xs text-slate-500">试试更换国家或搜索关键词。</p>
+            <p className="mt-2 text-sm font-medium text-slate-300">{t('programs.empty_catalog')}</p>
+            <p className="mt-1 text-xs text-slate-500">{t('programs.empty_catalog_hint')}</p>
           </div>
         )}
 
@@ -563,8 +718,12 @@ export default function ProgramsView() {
 
             return (
               <ProgramCard
-                key={programId ?? `${getProgramName(program)}-${index}`}
+                key={programId ?? `${getProgramName(program, t, i18n.language)}-${index}`}
                 program={program}
+                harmonizeData={mandatorySubjectsData}
+                mandatorySubjectsLoading={mandatorySubjectsQuery.isFetching}
+                mandatorySubjectsError={mandatorySubjectsQuery.isError}
+                mandatorySubjectsNeedsDiagnosis={!canCheckMandatorySubjects}
                 selected={selected}
                 disabled={isSyncingPrograms || isLoadingSavedPrograms}
                 onToggle={handleToggleProgram}
@@ -577,9 +736,9 @@ export default function ProgramsView() {
       <aside className="fixed inset-x-0 bottom-14 z-30 mx-auto max-w-md px-3">
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-indigo-700/60 bg-slate-900/95 px-3.5 py-2.5 shadow-xl shadow-black/30 backdrop-blur">
           <div>
-            <p className="text-xs font-semibold text-white">志愿车已选</p>
+            <p className="text-xs font-semibold text-white">{t('programs.cart_title')}</p>
             <p className="mt-0.5 text-[11px] text-slate-400">
-              {selectedProgramIds.length} 个专业
+              {t('programs.cart_count', { count: selectedProgramIds.length })}
             </p>
           </div>
           <button
@@ -587,7 +746,7 @@ export default function ProgramsView() {
             onClick={() => setActiveTab('harmonizer')}
             className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-cyan-500 active:scale-95"
           >
-            直达排课调和
+            {t('programs.go_harmonizer')}
           </button>
         </div>
       </aside>

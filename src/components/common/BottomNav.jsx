@@ -6,30 +6,32 @@ import {
   Sparkles,
   Trophy,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { usePlan } from '../../context/PlanContext.jsx'
 
 const tabs = [
-  { id: 'wizard', label: '智能向导', Icon: Sparkles },
-  { id: 'programs', label: '大学专业', Icon: GraduationCap },
-  { id: 'harmonizer', label: '调和排课', Icon: SlidersHorizontal },
-  { id: 'wiki', label: '科普与签证', Icon: BookMarked },
-  { id: 'extra', label: '竞赛/CAS', Icon: Trophy },
-  { id: 'timeline', label: '时间规划', Icon: CalendarDays },
+  { id: 'wizard', key: 'wizard', Icon: Sparkles },
+  { id: 'programs', key: 'programs', Icon: GraduationCap },
+  { id: 'harmonizer', key: 'harmonizer', Icon: SlidersHorizontal },
+  { id: 'wiki', key: 'wiki', Icon: BookMarked },
+  { id: 'extra', key: 'extra', Icon: Trophy },
+  { id: 'timeline', key: 'timeline', Icon: CalendarDays },
 ]
 
 export default function BottomNav({ conflicts = [] }) {
   const { activeTab, setActiveTab } = usePlan()
+  const { t } = useTranslation()
   const hasConflicts = Array.isArray(conflicts)
     ? conflicts.length > 0
     : Boolean(conflicts)
 
   return (
     <nav
-      aria-label="主导航"
+      aria-label={t('nav.main')}
       className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md border-t border-slate-800 bg-slate-950/95 px-1 py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] backdrop-blur-lg"
     >
       <div className="grid grid-cols-6 gap-0.5">
-        {tabs.map(({ id, label, Icon }) => {
+        {tabs.map(({ id, key, Icon }) => {
           const isActive = activeTab === id
 
           return (
@@ -46,12 +48,12 @@ export default function BottomNav({ conflicts = [] }) {
             >
               {id === 'harmonizer' && hasConflicts && (
                 <span
-                  aria-label="存在排课冲突"
+                  aria-label={t('nav.conflict')}
                   className="absolute right-2 top-1 h-1.5 w-1.5 rounded-full bg-red-500"
                 />
               )}
               <Icon className="mb-0.5 h-3.5 w-3.5" aria-hidden="true" />
-              <span>{label}</span>
+              <span>{t(`nav.${key}`)}</span>
             </button>
           )
         })}
