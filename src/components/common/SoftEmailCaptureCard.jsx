@@ -15,14 +15,35 @@ import { usePlan } from '../../context/PlanContext.jsx'
 
 const RESEND_COOLDOWN_SECONDS = 30
 
-export default function SoftEmailCaptureCard({
+function getSavedEmail() {
+  try {
+    return window.localStorage.getItem('atlasib_saved_email') ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export default function SoftEmailCaptureCard(props) {
+  const { currentProfileId, currentUser } = usePlan()
+  return (
+    <SoftEmailCaptureCardForm
+      {...props}
+      key={currentUser?.email ?? 'guest'}
+      currentProfileId={currentProfileId}
+      initialEmail={currentUser?.email ?? getSavedEmail()}
+    />
+  )
+}
+
+function SoftEmailCaptureCardForm({
   onSaved,
   scenarios = null,
   activeScenarioId = null,
+  currentProfileId,
+  initialEmail,
 }) {
   const { t, i18n } = useTranslation()
-  const { currentProfileId } = usePlan()
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(initialEmail)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSuccess, setIsSuccess] = useState(false)
   const [errorKey, setErrorKey] = useState('')

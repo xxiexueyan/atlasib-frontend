@@ -31,6 +31,9 @@ export default function App() {
     retryProgramSync,
     isSyncingPrograms,
     isLoadingSavedPrograms,
+    isSessionLoading,
+    sessionRestoreError,
+    restoreSession,
     restoreStatus,
     dismissRestoreStatus,
     conflictCandidate,
@@ -57,6 +60,30 @@ export default function App() {
       <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col border-x border-slate-800 bg-slate-950 shadow-2xl">
         <Header onOpenGlossary={openGlossary} />
         <main className="flex-1 px-4 py-4">
+          {isSessionLoading && (
+            <p
+              role="status"
+              className="mb-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-400"
+            >
+              {t('auth.session_restoring')}
+            </p>
+          )}
+          {sessionRestoreError && (
+            <div
+              role="alert"
+              className="mb-3 rounded-xl border border-amber-800 bg-amber-950/40 p-3 text-xs text-amber-100"
+            >
+              <p>{t('auth.session_restore_failed')}</p>
+              <button
+                type="button"
+                onClick={() => void restoreSession()}
+                disabled={isSessionLoading}
+                className="mt-2 rounded-lg border border-amber-700 px-2.5 py-1 font-semibold transition hover:bg-amber-900/50 disabled:opacity-50"
+              >
+                {isSessionLoading ? t('app.syncing') : t('auth.retry_restore')}
+              </button>
+            </div>
+          )}
           {restoreStatus === 'syncing' && (
             <p role="status" className="mb-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-400">
               {t('restore_dialog.status_syncing')}
@@ -109,7 +136,7 @@ export default function App() {
               </div>
             </div>
           )}
-          <CurrentView />
+          {!isSessionLoading && <CurrentView />}
         </main>
         <BottomNav />
         {conflictCandidate && (

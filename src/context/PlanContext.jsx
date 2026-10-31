@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react'
 import i18n from '../i18n.js'
+import { authApi } from '../api/auth.js'
 import { userProgramApi } from '../api/userPrograms.js'
 
 const PlanContext = createContext(null)
@@ -201,8 +202,19 @@ export function PlanProvider({ children }) {
   const [isSyncingPrograms, setIsSyncingPrograms] = useState(false)
   const [persistenceError, setPersistenceError] = useState('')
   const [clientDeviceId] = useState(createDeviceId)
-  const [restoreStatus, setRestoreStatus] = useState('')
+  const [restoreStatus, setRestoreStatus] = useState(() =>
+    new URLSearchParams(window.location.search).get('restore_token')
+      ? 'syncing'
+      : '',
+  )
   const [conflictCandidate, setConflictCandidate] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [isSessionLoading, setIsSessionLoading] = useState(() =>
+    Boolean(readStoredValue('atlasib_session_token')),
+  )
+  const [sessionRestoreError, setSessionRestoreError] = useState(false)
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [profileHydrationVersion, setProfileHydrationVersion] = useState(0)
 
   const profileIdRef = useRef(currentProfileId)
   const selectedProgramIdsRef = useRef(selectedProgramIds)
@@ -230,6 +242,224 @@ export function PlanProvider({ children }) {
   const clearSelectedPrograms = useCallback(() => {
     updateSelectedProgramIds([])
   }, [updateSelectedProgramIds])
+
+  const applyUserData = useCallback(
+    (userData) => {
+      if (
+        !userData ||
+        typeof userData.user_id !== 'string' ||
+        typeof userData.email !== 'string'
+      ) {
+        throw new TypeError('The authentication response has invalid user data.')
+      }
+
+      const activeProfileId =
+        typeof userData.active_profile_id === 'string' &&
+        userData.active_profile_id.trim()
+          ? userData.active_profile_id.trim()
+          : null
+      const previousProfileId = profileIdRef.current
+      skipHydrationForProfileRef.current = null
+      profileIdRef.current = activeProfileId
+      setCurrentProfileId(activeProfileId)
+      setCurrentUser({ userId: userData.user_id, email: userData.email })
+      setDiagnosisResult(null)
+      setWizardAnswers(defaultWizardAnswers)
+      if (!activeProfileId) setIsLoadingSavedPrograms(false)
+
+      if (previousProfileId && previousProfileId !== activeProfileId) {
+        try {
+          window.localStorage.removeItem(
+            getActiveScenarioStorageKey(previousProfileId),
+          )
+        } catch {
+          console.warn('Could not clear the previous profile scenario cache.')
+        }
+      }
+
+      try {
+        window.localStorage.setItem(EMAIL_STORAGE_KEY, userData.email)
+        if (activeProfileId) {
+          window.localStorage.setItem(PROFILE_STORAGE_KEY, activeProfileId)
+        } else {
+          window.localStorage.removeItem(PROFILE_STORAGE_KEY)
+        }
+      } catch (error) {
+        setPersistenceError(
+          i18n.t('app.cache_failed', { error: getErrorMessage(error) }),
+        )
+      }
+
+      const programIds = Array.isArray(userData.selected_program_ids)
+        ? userData.selected_program_ids
+        : []
+      updateSelectedProgramIds(programIds)
+      setProfileHydrationVersion((version) => version + 1)
+
+      const scenario = Array.isArray(userData.scenarios)
+        ? userData.scenarios.find(
+            (item) =>
+              item?.scenario_id === userData.active_scenario_id &&
+              Array.isArray(item.subjects),
+          )
+        : null
+      if (scenario && activeProfileId) {
+        const activeScenario = {
+          scenario_id: scenario.scenario_id,
+          scenario_name: scenario.name,
+          profile_id: activeProfileId,
+          program_ids: normalizeProgramIds(programIds),
+          subjects: scenario.subjects,
+          saved_at: Date.now(),
+        }
+        setActiveScenario(activeScenario)
+        try {
+          window.localStorage.setItem(
+            getActiveScenarioStorageKey(activeProfileId),
+            JSON.stringify(activeScenario),
+          )
+        } catch (error) {
+          setPersistenceError(
+            i18n.t('app.cache_failed', { error: getErrorMessage(error) }),
+          )
+        }
+      } else {
+        setActiveScenario(null)
+        if (activeProfileId) {
+          try {
+            window.localStorage.removeItem(
+              getActiveScenarioStorageKey(activeProfileId),
+            )
+          } catch (error) {
+            setPersistenceError(
+              i18n.t('app.cache_failed', { error: getErrorMessage(error) }),
+            )
+          }
+        }
+      }
+    },
+    [updateSelectedProgramIds],
+  )
+
+  const restoreSession = useCallback(async (showLoading = true) => {
+    if (showLoading) {
+      setIsSessionLoading(true)
+      setSessionRestoreError(false)
+    }
+    const token = readStoredValue('atlasib_session_token')
+    if (!token) {
+      if (showLoading) {
+        setCurrentUser(null)
+        setIsSessionLoading(false)
+      }
+      return { success: true, authenticated: false }
+    }
+
+    try {
+      const response = await authApi.me()
+      if (!response?.success || !response.user) {
+        throw new Error('The session response did not contain a user.')
+      }
+      applyUserData(response.user)
+      return { success: true, authenticated: true }
+    } catch (error) {
+      if (error?.response?.status === 401) {
+        try {
+          window.localStorage.removeItem('atlasib_session_token')
+        } catch {
+          console.warn('Could not clear the invalid authentication session.')
+        }
+        setCurrentUser(null)
+        setSessionRestoreError(false)
+        return { success: false, authenticated: false }
+      }
+
+      setSessionRestoreError(true)
+      console.error('Unable to verify the saved login session.')
+      return { success: false, authenticated: false }
+    } finally {
+      setIsSessionLoading(false)
+    }
+  }, [applyUserData])
+
+  useEffect(() => {
+    void Promise.resolve().then(() => restoreSession(false))
+  }, [restoreSession])
+
+  const loginWithOtp = useCallback(
+    async (email, code, lang = 'en') => {
+      const response = await authApi.verifyOtp(
+        email,
+        code,
+        currentProfileId,
+        lang,
+      )
+      if (
+        !response?.success ||
+        typeof response.session_token !== 'string' ||
+        !response.user
+      ) {
+        throw new Error('The login response is incomplete.')
+      }
+
+      window.localStorage.setItem(
+        'atlasib_session_token',
+        response.session_token,
+      )
+      applyUserData(response.user)
+      setSessionRestoreError(false)
+      setIsSessionLoading(false)
+      return response
+    },
+    [applyUserData, currentProfileId],
+  )
+
+  const logout = useCallback(async () => {
+    let serverLogoutConfirmed = true
+    const token = readStoredValue('atlasib_session_token')
+    const previousProfileId = profileIdRef.current
+    try {
+      if (token) {
+        const response = await authApi.logout()
+        serverLogoutConfirmed = response?.success === true
+      }
+    } catch {
+      serverLogoutConfirmed = false
+    } finally {
+      for (const key of [
+        'atlasib_session_token',
+        'atlasib_user_session',
+        PROFILE_STORAGE_KEY,
+        EMAIL_STORAGE_KEY,
+      ]) {
+        try {
+          window.localStorage.removeItem(key)
+        } catch {
+          console.warn('Could not fully clear the local login session.')
+        }
+      }
+      profileIdRef.current = null
+      setCurrentProfileId(null)
+      setDiagnosisResult(null)
+      setWizardAnswers(defaultWizardAnswers)
+      setActiveScenario(null)
+      setCurrentUser(null)
+      setSessionRestoreError(false)
+      setIsSessionLoading(false)
+      try {
+        window.localStorage.removeItem(getActiveScenarioStorageKey(null))
+        if (previousProfileId) {
+          window.localStorage.removeItem(
+            getActiveScenarioStorageKey(previousProfileId),
+          )
+        }
+      } catch {
+        console.warn('Could not clear the cached active scenario.')
+      }
+    }
+
+    return { success: serverLogoutConfirmed }
+  }, [])
 
   const clearExpiredProfile = useCallback(
     (profileId) => {
@@ -349,7 +579,12 @@ export function PlanProvider({ children }) {
     return () => {
       isActive = false
     }
-  }, [clearExpiredProfile, currentProfileId, updateSelectedProgramIds])
+  }, [
+    clearExpiredProfile,
+    currentProfileId,
+    profileHydrationVersion,
+    updateSelectedProgramIds,
+  ])
 
   const adoptRestoredProfile = useCallback(
     (profileId) => {
@@ -382,7 +617,6 @@ export function PlanProvider({ children }) {
       `${url.pathname}${url.search}${url.hash}`,
     )
 
-    setRestoreStatus('syncing')
     userProgramApi
       .restoreSessionByToken(token)
       .then((data) => {
@@ -806,6 +1040,14 @@ export function PlanProvider({ children }) {
   return (
     <PlanContext.Provider
       value={{
+        currentUser,
+        loginWithOtp,
+        logout,
+        restoreSession,
+        isSessionLoading,
+        sessionRestoreError,
+        isAuthModalOpen,
+        setIsAuthModalOpen,
         currentProfileId,
         clientDeviceId,
         saveProfileId,

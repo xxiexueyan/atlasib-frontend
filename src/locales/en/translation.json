@@ -2,7 +2,7 @@
   "brand": {
     "title": "AtlasIB",
     "badge": "Smart Admissions",
-    "subtitle": "Reverse Planning · Multi-Goal IB Harmonizer"
+    "subtitle": "Reverse Planning · Harmonizer"
   },
   "nav": {
     "wizard": "Wizard",
@@ -21,6 +21,31 @@
     "program_count": "{{count}} programs",
     "view_plan": "View course plan",
     "switch_language": "Switch language"
+  },
+  "auth": {
+    "sign_in": "Sign In / Register",
+    "sign_in_short": "Sign In",
+    "sign_out": "Sign Out",
+    "modal_title": "Sign In to AtlasIB",
+    "modal_subtitle": "Enter your email to receive a 6-digit verification code. No password required.",
+    "email_label": "Email Address",
+    "email_placeholder": "name@example.com",
+    "otp_label": "6-Digit Verification Code",
+    "otp_placeholder": "Enter 6-digit code",
+    "btn_get_code": "Get Code",
+    "btn_resend_code": "Resend in {{seconds}}s",
+    "btn_submit_login": "Sign In / Continue",
+    "logged_in_as": "Signed in as",
+    "login_success": "Signed in successfully! Your saved plans have been loaded.",
+    "logout_success": "Signed out successfully.",
+    "logout_unconfirmed": "Signed out on this device, but server session revocation could not be confirmed.",
+    "err_invalid_email": "Please enter a valid email address.",
+    "err_invalid_code": "Please enter the 6-digit verification code.",
+    "err_send_failed": "Could not send the code. Please try again.",
+    "privacy_hint": "Protected by passwordless email OTP. Zero spam guaranteed.",
+    "session_restoring": "Restoring your account...",
+    "session_restore_failed": "Unable to verify your saved session. Your sign-in is preserved; retry when the connection is available.",
+    "retry_restore": "Retry"
   },
   "common": {
     "language": "Language",
