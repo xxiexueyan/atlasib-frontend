@@ -71,6 +71,11 @@
     "approx": "Approx.",
     "year": "/ year"
   },
+  "pwa": {
+    "update_available": "A new version is available. Refresh to update.",
+    "refresh": "Refresh",
+    "later": "Later"
+  },
   "app": {
     "document_title": "AtlasIB | IB Study Planning",
     "restoring": "Restoring profile and saved programs…",

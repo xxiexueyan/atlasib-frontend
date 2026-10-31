@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import BottomNav from './components/common/BottomNav.jsx'
+import ReloadPrompt from './components/common/ReloadPrompt.jsx'
 import RestoreConflictModal from './components/common/RestoreConflictModal.jsx'
 import GlossaryModal from './components/common/GlossaryModal.jsx'
 import Header from './components/common/Header.jsx'
@@ -152,6 +153,7 @@ export default function App() {
           onClose={() => setGlossaryOpen(false)}
         />
       </div>
+      <ReloadPrompt />
     </div>
   )
 }

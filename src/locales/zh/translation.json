@@ -71,6 +71,11 @@
     "approx": "约",
     "year": "/ 年"
   },
+  "pwa": {
+    "update_available": "发现新版本，刷新即可更新。",
+    "refresh": "立即刷新",
+    "later": "稍后"
+  },
   "app": {
     "document_title": "AtlasIB 留学规划",
     "restoring": "正在恢复云端画像与志愿…",
